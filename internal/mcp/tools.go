@@ -546,13 +546,51 @@ func (s *Server) handleMoveFeed(_ context.Context, req mcp.CallToolRequest) (*mc
 		return nil, fmt.Errorf("invalid input: %w", err)
 	}
 
+	// Validate URL format (consistent with handleAddFeed)
+	parsedURL, err := url.Parse(input.URL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid feed URL: %w", err)
+	}
+	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+		return nil, fmt.Errorf("feed URL must use http or https scheme, got: %s", parsedURL.Scheme)
+	}
+	if parsedURL.Host == "" {
+		return nil, fmt.Errorf("feed URL must have a host")
+	}
+
+	// Verify feed exists in database (consistent with handleRemoveFeed)
+	if _, err := db.GetFeedByURL(s.db, input.URL); err != nil {
+		return nil, fmt.Errorf("feed not found: %s", input.URL)
+	}
+
 	// Find current folder for the feed
 	oldFolder := ""
+	found := false
 	for _, feed := range s.opmlDoc.AllFeeds() {
 		if feed.URL == input.URL {
 			oldFolder = feed.Folder
+			found = true
 			break
 		}
+	}
+	if !found {
+		return nil, fmt.Errorf("feed not found in OPML: %s", input.URL)
+	}
+
+	// Skip if already in target folder
+	if oldFolder == input.Folder {
+		output := MoveFeedOutput{
+			Success:   true,
+			Message:   fmt.Sprintf("Feed is already in %s", formatFolder(oldFolder)),
+			URL:       input.URL,
+			OldFolder: oldFolder,
+			NewFolder: input.Folder,
+		}
+		jsonBytes, err := json.MarshalIndent(output, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal output: %w", err)
+		}
+		return mcp.NewToolResultText(string(jsonBytes)), nil
 	}
 
 	// Move the feed
@@ -567,7 +605,7 @@ func (s *Server) handleMoveFeed(_ context.Context, req mcp.CallToolRequest) (*mc
 
 	output := MoveFeedOutput{
 		Success:   true,
-		Message:   fmt.Sprintf("Feed moved from '%s' to '%s'", oldFolder, input.Folder),
+		Message:   fmt.Sprintf("Feed moved from %s to %s", formatFolder(oldFolder), formatFolder(input.Folder)),
 		URL:       input.URL,
 		OldFolder: oldFolder,
 		NewFolder: input.Folder,
@@ -1024,4 +1062,12 @@ func parseDateString(s string) (time.Time, error) {
 	}
 
 	return time.Time{}, fmt.Errorf("cannot parse date: use yesterday, week, month, today, or YYYY-MM-DD format")
+}
+
+// formatFolder returns a human-readable folder name for messages
+func formatFolder(folder string) string {
+	if folder == "" {
+		return "root level"
+	}
+	return fmt.Sprintf("'%s'", folder)
 }
