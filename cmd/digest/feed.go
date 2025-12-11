@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/harper/digest/internal/db"
+	"github.com/harper/digest/internal/discover"
 	"github.com/harper/digest/internal/models"
 )
 
@@ -24,26 +25,54 @@ var feedCmd = &cobra.Command{
 var feedAddCmd = &cobra.Command{
 	Use:   "add <url>",
 	Short: "Add a new RSS/Atom feed",
-	Long:  "Add a new feed to your subscriptions and sync to OPML",
+	Long:  "Add a new feed to your subscriptions and sync to OPML. Automatically discovers feed URLs from HTML pages.",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		url := args[0]
+		inputURL := args[0]
 		folder, _ := cmd.Flags().GetString("folder")
 		title, _ := cmd.Flags().GetString("title")
+		noDiscover, _ := cmd.Flags().GetBool("no-discover")
+
+		var feedURL, feedTitle string
+
+		if noDiscover {
+			// Skip discovery, use URL as-is
+			feedURL = inputURL
+			feedTitle = title
+		} else {
+			// Discover feed from URL
+			fmt.Printf("Discovering feed at %s...\n", inputURL)
+			discovered, err := discover.Discover(inputURL)
+			if err != nil {
+				return fmt.Errorf("could not find feed at %s: %w", inputURL, err)
+			}
+
+			feedURL = discovered.URL
+			if title != "" {
+				feedTitle = title
+			} else {
+				feedTitle = discovered.Title
+			}
+
+			// Inform user if URL changed
+			if feedURL != inputURL {
+				fmt.Printf("Found feed: %s\n", feedURL)
+			}
+		}
 
 		// Check if feed already exists
-		existingFeed, err := db.GetFeedByURL(dbConn, url)
+		existingFeed, err := db.GetFeedByURL(dbConn, feedURL)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("failed to check for existing feed: %w", err)
 		}
 		if existingFeed != nil {
-			return fmt.Errorf("feed already exists: %s", url)
+			return fmt.Errorf("feed already exists: %s", feedURL)
 		}
 
 		// Create new feed
-		feed := models.NewFeed(url)
-		if title != "" {
-			feed.Title = &title
+		feed := models.NewFeed(feedURL)
+		if feedTitle != "" {
+			feed.Title = &feedTitle
 		}
 
 		// Save to database
@@ -52,11 +81,11 @@ var feedAddCmd = &cobra.Command{
 		}
 
 		// Add to OPML
-		opmlTitle := title
+		opmlTitle := feedTitle
 		if opmlTitle == "" {
-			opmlTitle = url
+			opmlTitle = feedURL
 		}
-		if err := opmlDoc.AddFeed(url, opmlTitle, folder); err != nil {
+		if err := opmlDoc.AddFeed(feedURL, opmlTitle, folder); err != nil {
 			return fmt.Errorf("failed to add feed to OPML: %w", err)
 		}
 
@@ -66,9 +95,9 @@ var feedAddCmd = &cobra.Command{
 		}
 
 		if folder != "" {
-			fmt.Printf("Added feed to folder '%s': %s\n", folder, url)
+			fmt.Printf("Added feed to folder '%s': %s\n", folder, feedTitle)
 		} else {
-			fmt.Printf("Added feed: %s\n", url)
+			fmt.Printf("Added feed: %s\n", feedTitle)
 		}
 		fmt.Printf("Feed ID: %s\n", feed.ID)
 
@@ -146,5 +175,6 @@ func init() {
 	feedCmd.AddCommand(feedRemoveCmd)
 
 	feedAddCmd.Flags().StringP("folder", "f", "", "folder to organize feed in")
-	feedAddCmd.Flags().StringP("title", "t", "", "feed title (defaults to URL)")
+	feedAddCmd.Flags().StringP("title", "t", "", "feed title (defaults to discovered title)")
+	feedAddCmd.Flags().Bool("no-discover", false, "skip feed discovery and use URL as-is")
 }

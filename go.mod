@@ -8,6 +8,7 @@ require (
 	github.com/mark3labs/mcp-go v0.43.2
 	github.com/mmcdole/gofeed v1.3.0
 	github.com/spf13/cobra v1.10.1
+	golang.org/x/net v0.48.0
 	modernc.org/sqlite v1.40.1
 )
 
@@ -33,7 +34,6 @@ require (
 	github.com/wk8/go-ordered-map/v2 v2.1.8 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	golang.org/x/exp v0.0.0-20251209150349-8475f28825e9 // indirect
-	golang.org/x/net v0.48.0 // indirect
 	golang.org/x/sys v0.39.0 // indirect
 	golang.org/x/text v0.32.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
