@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"time"
 
 	"github.com/harper/digest/internal/db"
@@ -318,6 +319,18 @@ func (s *Server) handleAddFeed(_ context.Context, req mcp.CallToolRequest) (*mcp
 	var input AddFeedInput
 	if err := req.BindArguments(&input); err != nil {
 		return nil, fmt.Errorf("invalid input: %w", err)
+	}
+
+	// Validate URL format
+	parsedURL, err := url.Parse(input.URL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid feed URL: %w", err)
+	}
+	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+		return nil, fmt.Errorf("feed URL must use http or https scheme, got: %s", parsedURL.Scheme)
+	}
+	if parsedURL.Host == "" {
+		return nil, fmt.Errorf("feed URL must have a host")
 	}
 
 	// Check if feed already exists in database
@@ -674,9 +687,11 @@ func (s *Server) syncFeed(feed *models.Feed, force bool) (int, bool, error) {
 		return 0, false, fmt.Errorf("failed to parse feed: %w", err)
 	}
 
-	// Update feed title if empty
+	// Update feed title if empty and persist to database
+	titleUpdated := false
 	if feed.Title == nil || *feed.Title == "" {
 		feed.Title = &parsed.Title
+		titleUpdated = true
 	}
 
 	// Process entries
@@ -710,6 +725,13 @@ func (s *Server) syncFeed(feed *models.Feed, force bool) (int, bool, error) {
 	fetchedAt := time.Now()
 	if err := db.UpdateFeedFetchState(s.db, feed.ID, &result.ETag, &result.LastModified, fetchedAt); err != nil {
 		return newCount, false, fmt.Errorf("failed to update feed state: %w", err)
+	}
+
+	// If title was updated, persist to database
+	if titleUpdated {
+		if err := db.UpdateFeed(s.db, feed); err != nil {
+			return newCount, false, fmt.Errorf("failed to update feed title: %w", err)
+		}
 	}
 
 	return newCount, false, nil

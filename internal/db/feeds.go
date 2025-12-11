@@ -6,6 +6,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/harper/digest/internal/models"
@@ -39,9 +40,13 @@ func GetFeedByPrefix(db *sql.DB, prefix string) (*models.Feed, error) {
 		return nil, fmt.Errorf("prefix must be at least 6 characters")
 	}
 
+	// Escape SQL wildcards in prefix
+	escapedPrefix := strings.ReplaceAll(prefix, "%", "\\%")
+	escapedPrefix = strings.ReplaceAll(escapedPrefix, "_", "\\_")
+
 	rows, err := db.Query(`
 		SELECT id, url, title, etag, last_modified, last_fetched_at, last_error, error_count, created_at
-		FROM feeds WHERE id LIKE ?`, prefix+"%",
+		FROM feeds WHERE id LIKE ? ESCAPE '\'`, escapedPrefix+"%",
 	)
 	if err != nil {
 		return nil, err
@@ -56,6 +61,10 @@ func GetFeedByPrefix(db *sql.DB, prefix string) (*models.Feed, error) {
 			return nil, err
 		}
 		feeds = append(feeds, feed)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating feeds: %w", err)
 	}
 
 	if len(feeds) == 0 {
@@ -98,6 +107,11 @@ func ListFeeds(db *sql.DB) ([]*models.Feed, error) {
 		}
 		feeds = append(feeds, feed)
 	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating feeds: %w", err)
+	}
+
 	return feeds, nil
 }
 

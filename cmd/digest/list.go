@@ -56,8 +56,11 @@ var listCmd = &cobra.Command{
 
 		// Display entries
 		for _, entry := range entries {
-			// ID (first 8 chars, faint)
-			idShort := entry.ID[:8]
+			// ID (first 8 chars, faint) - with bounds check for safety
+			idShort := entry.ID
+			if len(idShort) > 8 {
+				idShort = idShort[:8]
+			}
 			fmt.Print(faint(idShort))
 			fmt.Print(" ")
 

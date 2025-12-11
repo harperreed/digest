@@ -5,6 +5,7 @@ package main
 
 import (
 	"fmt"
+	"net/url"
 	"os/exec"
 	"runtime"
 
@@ -30,8 +31,17 @@ var openCmd = &cobra.Command{
 			return fmt.Errorf("entry has no link")
 		}
 
-		// Open browser
-		if err := openBrowser(*entry.Link); err != nil {
+		// Validate URL format and scheme for security
+		parsedURL, err := url.Parse(*entry.Link)
+		if err != nil {
+			return fmt.Errorf("entry has malformed link: %w", err)
+		}
+		if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+			return fmt.Errorf("entry link must be http or https, got: %s", parsedURL.Scheme)
+		}
+
+		// Open browser with validated URL
+		if err := openBrowser(parsedURL.String()); err != nil {
 			return fmt.Errorf("failed to open browser: %w", err)
 		}
 
@@ -52,22 +62,29 @@ var openCmd = &cobra.Command{
 }
 
 // openBrowser opens a URL in the default browser for the current platform
-func openBrowser(url string) error {
+func openBrowser(urlStr string) error {
 	var cmd *exec.Cmd
 
 	switch runtime.GOOS {
 	case "darwin":
-		cmd = exec.Command("open", url)
+		cmd = exec.Command("open", urlStr)
 	case "linux":
-		cmd = exec.Command("xdg-open", url)
+		cmd = exec.Command("xdg-open", urlStr)
 	case "windows":
-		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", urlStr)
 	default:
 		return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
 	}
 
-	// Start the browser (don't wait for it to complete)
-	return cmd.Start()
+	// Start the browser
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start browser: %w", err)
+	}
+
+	// Reap the process asynchronously to prevent zombie processes
+	go cmd.Wait()
+
+	return nil
 }
 
 func init() {

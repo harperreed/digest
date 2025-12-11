@@ -6,6 +6,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/harper/digest/internal/models"
@@ -64,34 +65,59 @@ func GetEntryByID(db *sql.DB, id string) (*models.Entry, error) {
 }
 
 // GetEntryByPrefix finds an entry by ID prefix (minimum 6 characters)
+// Returns an error if the prefix is ambiguous (matches multiple entries)
 func GetEntryByPrefix(db *sql.DB, prefix string) (*models.Entry, error) {
 	if len(prefix) < 6 {
 		return nil, fmt.Errorf("prefix must be at least 6 characters")
 	}
-	query := `
+
+	// Escape SQL wildcards in prefix
+	escapedPrefix := strings.ReplaceAll(prefix, "%", "\\%")
+	escapedPrefix = strings.ReplaceAll(escapedPrefix, "_", "\\_")
+
+	rows, err := db.Query(`
 		SELECT id, feed_id, guid, title, link, author, published_at, content, read, read_at, created_at
 		FROM entries
-		WHERE id LIKE ?
-		LIMIT 1
-	`
-	entry := &models.Entry{}
-	err := db.QueryRow(query, prefix+"%").Scan(
-		&entry.ID,
-		&entry.FeedID,
-		&entry.GUID,
-		&entry.Title,
-		&entry.Link,
-		&entry.Author,
-		&entry.PublishedAt,
-		&entry.Content,
-		&entry.Read,
-		&entry.ReadAt,
-		&entry.CreatedAt,
+		WHERE id LIKE ? ESCAPE '\'`,
+		escapedPrefix+"%",
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get entry by prefix: %w", err)
+		return nil, fmt.Errorf("failed to query entries by prefix: %w", err)
 	}
-	return entry, nil
+	defer rows.Close()
+
+	var entries []*models.Entry
+	for rows.Next() {
+		entry := &models.Entry{}
+		if err := rows.Scan(
+			&entry.ID,
+			&entry.FeedID,
+			&entry.GUID,
+			&entry.Title,
+			&entry.Link,
+			&entry.Author,
+			&entry.PublishedAt,
+			&entry.Content,
+			&entry.Read,
+			&entry.ReadAt,
+			&entry.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan entry: %w", err)
+		}
+		entries = append(entries, entry)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating entries: %w", err)
+	}
+
+	if len(entries) == 0 {
+		return nil, fmt.Errorf("no entry found with prefix %s", prefix)
+	}
+	if len(entries) > 1 {
+		return nil, fmt.Errorf("ambiguous prefix %s matches %d entries", prefix, len(entries))
+	}
+	return entries[0], nil
 }
 
 // ListEntries retrieves entries with flexible filtering

@@ -14,7 +14,8 @@ import (
 
 func InitDB(dbPath string) (*sql.DB, error) {
 	dir := filepath.Dir(dbPath)
-	if err := os.MkdirAll(dir, 0750); err != nil {
+	// Use 0700 (owner only) for privacy - RSS reading habits are personal data
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, fmt.Errorf("failed to create database directory: %w", err)
 	}
 

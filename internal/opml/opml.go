@@ -176,7 +176,16 @@ func (d *Document) AddFolder(name string) error {
 
 // AddFeed adds a feed to the document, optionally in a folder
 // Creates the folder if it doesn't exist
+// Returns an error if a feed with the same URL already exists
 func (d *Document) AddFeed(url, title, folder string) error {
+	// Check if feed already exists
+	allFeeds := d.AllFeeds()
+	for _, f := range allFeeds {
+		if f.URL == url {
+			return fmt.Errorf("feed with URL %s already exists", url)
+		}
+	}
+
 	feed := Outline{
 		Text:   title,
 		Title:  title,

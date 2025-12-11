@@ -136,9 +136,11 @@ func syncFeed(feed *models.Feed, force bool) (newCount int, wasCached bool, err 
 		return 0, false, fmt.Errorf("failed to parse feed: %w", err)
 	}
 
-	// Update feed title if empty
+	// Update feed title if empty and persist to database
+	titleUpdated := false
 	if feed.Title == nil || *feed.Title == "" {
 		feed.Title = &parsed.Title
+		titleUpdated = true
 	}
 
 	// Process entries
@@ -172,6 +174,13 @@ func syncFeed(feed *models.Feed, force bool) (newCount int, wasCached bool, err 
 	fetchedAt := time.Now()
 	if err := db.UpdateFeedFetchState(dbConn, feed.ID, &result.ETag, &result.LastModified, fetchedAt); err != nil {
 		return newCount, false, fmt.Errorf("failed to update feed state: %w", err)
+	}
+
+	// If title was updated, persist to database
+	if titleUpdated {
+		if err := db.UpdateFeed(dbConn, feed); err != nil {
+			return newCount, false, fmt.Errorf("failed to update feed title: %w", err)
+		}
 	}
 
 	return newCount, false, nil
