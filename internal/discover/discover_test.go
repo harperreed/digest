@@ -317,3 +317,413 @@ func TestDiscover_AbsoluteFeedLink(t *testing.T) {
 		t.Errorf("expected URL %s, got %s", expectedURL, feed.URL)
 	}
 }
+
+// Test malformed HTML parsing edge cases
+
+func TestDiscover_BrokenLinkTags(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/":
+			w.Header().Set("Content-Type", "text/html")
+			// Malformed HTML with broken link tags
+			html := `<!DOCTYPE html>
+<html>
+<head>
+  <link rel="alternate" type="application/rss+xml">
+  <link href="/feed.xml">
+  <link rel="alternate" type="application/rss+xml" href="/valid-feed.xml">
+</head>
+<body></body>
+</html>`
+			w.Write([]byte(html))
+		case "/valid-feed.xml":
+			w.Header().Set("Content-Type", "application/rss+xml")
+			w.Write([]byte(testRSSFeed))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	feed, err := Discover(server.URL)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	if feed == nil {
+		t.Fatal("expected feed, got nil")
+	}
+
+	expectedURL := server.URL + "/valid-feed.xml"
+	if feed.URL != expectedURL {
+		t.Errorf("expected URL %s, got %s", expectedURL, feed.URL)
+	}
+}
+
+func TestDiscover_MultipleFeedsSameType(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/":
+			w.Header().Set("Content-Type", "text/html")
+			html := `<!DOCTYPE html>
+<html>
+<head>
+  <link rel="alternate" type="application/rss+xml" title="Feed 1" href="/feed1.xml">
+  <link rel="alternate" type="application/rss+xml" title="Feed 2" href="/feed2.xml">
+  <link rel="alternate" type="application/rss+xml" title="Feed 3" href="/feed3.xml">
+</head>
+<body></body>
+</html>`
+			w.Write([]byte(html))
+		case "/feed1.xml":
+			w.Header().Set("Content-Type", "application/rss+xml")
+			w.Write([]byte(testRSSFeed))
+		case "/feed2.xml":
+			w.Header().Set("Content-Type", "application/rss+xml")
+			w.Write([]byte(testRSSFeed))
+		case "/feed3.xml":
+			w.Header().Set("Content-Type", "application/rss+xml")
+			w.Write([]byte(testRSSFeed))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	feed, err := Discover(server.URL)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	if feed == nil {
+		t.Fatal("expected feed, got nil")
+	}
+
+	// Should return the first valid feed
+	expectedURL := server.URL + "/feed1.xml"
+	if feed.URL != expectedURL {
+		t.Errorf("expected URL %s, got %s", expectedURL, feed.URL)
+	}
+}
+
+func TestDiscover_RelativeURLWithDotDot(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/blog/posts/":
+			w.Header().Set("Content-Type", "text/html")
+			html := `<!DOCTYPE html>
+<html>
+<head>
+  <link rel="alternate" type="application/rss+xml" href="../feed.xml">
+</head>
+<body></body>
+</html>`
+			w.Write([]byte(html))
+		case "/blog/feed.xml":
+			w.Header().Set("Content-Type", "application/rss+xml")
+			w.Write([]byte(testRSSFeed))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	feed, err := Discover(server.URL + "/blog/posts/")
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	if feed == nil {
+		t.Fatal("expected feed, got nil")
+	}
+
+	expectedURL := server.URL + "/blog/feed.xml"
+	if feed.URL != expectedURL {
+		t.Errorf("expected URL %s, got %s", expectedURL, feed.URL)
+	}
+}
+
+func TestDiscover_MalformedHTML(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/":
+			w.Header().Set("Content-Type", "text/html")
+			// Severely malformed HTML but with valid link tag
+			html := `<html><head><link rel="alternate" type="application/rss+xml" href="/feed.xml"</head><body>broken`
+			w.Write([]byte(html))
+		case "/feed.xml":
+			w.Header().Set("Content-Type", "application/rss+xml")
+			w.Write([]byte(testRSSFeed))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	feed, err := Discover(server.URL)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	if feed == nil {
+		t.Fatal("expected feed, got nil")
+	}
+
+	expectedURL := server.URL + "/feed.xml"
+	if feed.URL != expectedURL {
+		t.Errorf("expected URL %s, got %s", expectedURL, feed.URL)
+	}
+}
+
+// Test feed URL validation edge cases
+
+func TestDiscover_URLWithUnusualPort(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/rss+xml")
+		w.Write([]byte(testRSSFeed))
+	}))
+	defer server.Close()
+
+	feed, err := Discover(server.URL)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	if feed == nil {
+		t.Fatal("expected feed, got nil")
+	}
+
+	if feed.URL != server.URL {
+		t.Errorf("expected URL %s, got %s", server.URL, feed.URL)
+	}
+}
+
+func TestDiscover_URLWithQueryParameters(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.RawQuery != "format=rss&limit=10" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/rss+xml")
+		w.Write([]byte(testRSSFeed))
+	}))
+	defer server.Close()
+
+	feedURL := server.URL + "?format=rss&limit=10"
+	feed, err := Discover(feedURL)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	if feed == nil {
+		t.Fatal("expected feed, got nil")
+	}
+
+	if feed.URL != feedURL {
+		t.Errorf("expected URL %s, got %s", feedURL, feed.URL)
+	}
+}
+
+func TestDiscover_URLWithFragment(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/rss+xml")
+		w.Write([]byte(testRSSFeed))
+	}))
+	defer server.Close()
+
+	// Fragments should be preserved in the URL
+	feedURL := server.URL + "#section"
+	feed, err := Discover(feedURL)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	if feed == nil {
+		t.Fatal("expected feed, got nil")
+	}
+
+	if feed.URL != feedURL {
+		t.Errorf("expected URL %s, got %s", feedURL, feed.URL)
+	}
+}
+
+func TestDiscover_InvalidURLMalformedHost(t *testing.T) {
+	_, err := Discover("http://[invalid-host")
+	if err == nil {
+		t.Fatal("expected error for malformed host")
+	}
+}
+
+func TestDiscover_URLWithSpaces(t *testing.T) {
+	_, err := Discover("http://example.com/feed with spaces.xml")
+	if err == nil {
+		t.Fatal("expected error for URL with spaces")
+	}
+}
+
+func TestDiscover_EmptyURL(t *testing.T) {
+	_, err := Discover("")
+	if err == nil {
+		t.Fatal("expected error for empty URL")
+	}
+}
+
+func TestDiscover_URLWithoutHost(t *testing.T) {
+	_, err := Discover("http://")
+	if err == nil {
+		t.Fatal("expected error for URL without host")
+	}
+}
+
+// Test probe path behavior edge cases
+
+func TestDiscover_ProbeReturns200ButNotFeed(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/":
+			w.Header().Set("Content-Type", "text/html")
+			w.Write([]byte(testHTMLNoFeedLinks))
+		case "/feed.xml", "/rss.xml", "/atom.xml":
+			// These paths return 200 but with non-feed content
+			w.Header().Set("Content-Type", "text/html")
+			w.Write([]byte("<html><body>Not a feed</body></html>"))
+		case "/index.xml":
+			// This one is a valid feed
+			w.Header().Set("Content-Type", "application/rss+xml")
+			w.Write([]byte(testRSSFeed))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	feed, err := Discover(server.URL)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	if feed == nil {
+		t.Fatal("expected feed, got nil")
+	}
+
+	// Should find the valid feed at /index.xml
+	expectedURL := server.URL + "/index.xml"
+	if feed.URL != expectedURL {
+		t.Errorf("expected URL %s, got %s", expectedURL, feed.URL)
+	}
+}
+
+func TestDiscover_ProbeAllPathsFail(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" {
+			// Return HTML at root so we continue to probe
+			w.Header().Set("Content-Type", "text/html")
+			w.Write([]byte(testHTMLNoFeedLinks))
+			return
+		}
+		// Return 404 for all common paths
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	_, err := Discover(server.URL)
+	if err != ErrNoFeedFound {
+		t.Errorf("expected ErrNoFeedFound, got: %v", err)
+	}
+}
+
+func TestDiscover_ProbeServerError(t *testing.T) {
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		if r.URL.Path == "/" {
+			w.Header().Set("Content-Type", "text/html")
+			w.Write([]byte(testHTMLNoFeedLinks))
+			return
+		}
+		// Return 500 for all probe paths
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("Internal Server Error"))
+	}))
+	defer server.Close()
+
+	_, err := Discover(server.URL)
+	if err != ErrNoFeedFound {
+		t.Errorf("expected ErrNoFeedFound, got: %v", err)
+	}
+
+	// Should have attempted to probe common paths
+	if requestCount < 2 {
+		t.Errorf("expected multiple probe attempts, got %d requests", requestCount)
+	}
+}
+
+func TestDiscover_FeedLinkPointsToInvalidURL(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/":
+			w.Header().Set("Content-Type", "text/html")
+			html := `<!DOCTYPE html>
+<html>
+<head>
+  <link rel="alternate" type="application/rss+xml" href="ht!tp://invalid">
+  <link rel="alternate" type="application/rss+xml" href="/valid-feed.xml">
+</head>
+<body></body>
+</html>`
+			w.Write([]byte(html))
+		case "/valid-feed.xml":
+			w.Header().Set("Content-Type", "application/rss+xml")
+			w.Write([]byte(testRSSFeed))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	feed, err := Discover(server.URL)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	// Should skip invalid link and find valid one
+	expectedURL := server.URL + "/valid-feed.xml"
+	if feed.URL != expectedURL {
+		t.Errorf("expected URL %s, got %s", expectedURL, feed.URL)
+	}
+}
+
+func TestDiscover_FeedLinkPointsTo404(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/":
+			w.Header().Set("Content-Type", "text/html")
+			html := `<!DOCTYPE html>
+<html>
+<head>
+  <link rel="alternate" type="application/rss+xml" href="/missing.xml">
+  <link rel="alternate" type="application/rss+xml" href="/feed.xml">
+</head>
+<body></body>
+</html>`
+			w.Write([]byte(html))
+		case "/feed.xml":
+			w.Header().Set("Content-Type", "application/rss+xml")
+			w.Write([]byte(testRSSFeed))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	feed, err := Discover(server.URL)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	// Should skip 404 link and find valid one
+	expectedURL := server.URL + "/feed.xml"
+	if feed.URL != expectedURL {
+		t.Errorf("expected URL %s, got %s", expectedURL, feed.URL)
+	}
+}

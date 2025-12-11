@@ -4,6 +4,7 @@
 package db
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -503,5 +504,361 @@ func TestMarkEntriesReadBefore(t *testing.T) {
 	unreadCount, _ := CountUnreadEntries(conn, nil)
 	if unreadCount != 0 {
 		t.Errorf("expected 0 unread entries, got %d", unreadCount)
+	}
+}
+
+// Edge case tests for ListEntries
+
+func TestListEntries_VeryLargeDateRange(t *testing.T) {
+	conn := setupTestDB(t)
+	defer conn.Close()
+
+	// Create a feed
+	feed := models.NewFeed("https://example.com/feed.xml")
+	_ = CreateFeed(conn, feed)
+
+	// Create entries with dates spanning years
+	now := time.Now()
+	veryOld := now.Add(-365 * 24 * time.Hour) // 1 year ago
+	veryNew := now.Add(365 * 24 * time.Hour)  // 1 year in future
+
+	entry1 := models.NewEntry(feed.ID, "guid-old", "Old Entry")
+	entry1.PublishedAt = &veryOld
+	entry2 := models.NewEntry(feed.ID, "guid-now", "Current Entry")
+	entry2.PublishedAt = &now
+
+	_ = CreateEntry(conn, entry1)
+	_ = CreateEntry(conn, entry2)
+
+	// Test very large date range (2 years span)
+	since := veryOld.Add(-24 * time.Hour)
+	until := veryNew
+	entries, err := ListEntries(conn, nil, nil, nil, &since, &until, nil, nil)
+	if err != nil {
+		t.Fatalf("ListEntries with large date range failed: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Errorf("expected 2 entries in large date range, got %d", len(entries))
+	}
+}
+
+func TestListEntries_EmptyResultSets(t *testing.T) {
+	conn := setupTestDB(t)
+	defer conn.Close()
+
+	// Create a feed
+	feed := models.NewFeed("https://example.com/feed.xml")
+	_ = CreateFeed(conn, feed)
+
+	// Create a single read entry
+	now := time.Now()
+	entry := models.NewEntry(feed.ID, "guid-1", "Entry 1")
+	entry.PublishedAt = &now
+	_ = CreateEntry(conn, entry)
+	_ = MarkEntryRead(conn, entry.ID)
+
+	// Test empty result with unread filter
+	unreadOnly := true
+	entries, err := ListEntries(conn, nil, nil, &unreadOnly, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("ListEntries with unread filter failed: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("expected 0 unread entries, got %d", len(entries))
+	}
+
+	// Test empty result with future date filter
+	futureTime := now.Add(24 * time.Hour)
+	entries, err = ListEntries(conn, nil, nil, nil, &futureTime, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("ListEntries with future date failed: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("expected 0 entries after future date, got %d", len(entries))
+	}
+
+	// Test empty result with non-existent feed ID
+	nonExistentFeedID := "00000000-0000-0000-0000-000000000000"
+	entries, err = ListEntries(conn, &nonExistentFeedID, nil, nil, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("ListEntries with non-existent feed failed: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("expected 0 entries for non-existent feed, got %d", len(entries))
+	}
+
+	// Test empty result with multiple filters combined
+	entries, err = ListEntries(conn, &feed.ID, nil, &unreadOnly, &futureTime, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("ListEntries with multiple filters failed: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("expected 0 entries with combined filters, got %d", len(entries))
+	}
+}
+
+func TestListEntries_OffsetWithoutLimit(t *testing.T) {
+	conn := setupTestDB(t)
+	defer conn.Close()
+
+	// Create a feed
+	feed := models.NewFeed("https://example.com/feed.xml")
+	_ = CreateFeed(conn, feed)
+
+	// Create multiple entries
+	now := time.Now()
+	for i := 0; i < 5; i++ {
+		entry := models.NewEntry(feed.ID, fmt.Sprintf("guid-%d", i), fmt.Sprintf("Entry %d", i))
+		publishedAt := now.Add(time.Duration(i) * time.Hour)
+		entry.PublishedAt = &publishedAt
+		_ = CreateEntry(conn, entry)
+	}
+
+	// Test offset without limit (should use SQLite's LIMIT -1)
+	offset := 2
+	entries, err := ListEntries(conn, nil, nil, nil, nil, nil, nil, &offset)
+	if err != nil {
+		t.Fatalf("ListEntries with offset but no limit failed: %v", err)
+	}
+	if len(entries) != 3 {
+		t.Errorf("expected 3 entries after offset of 2, got %d", len(entries))
+	}
+}
+
+func TestListEntries_NegativeOffset(t *testing.T) {
+	conn := setupTestDB(t)
+	defer conn.Close()
+
+	// Create a feed
+	feed := models.NewFeed("https://example.com/feed.xml")
+	_ = CreateFeed(conn, feed)
+
+	// Create entries
+	now := time.Now()
+	entry := models.NewEntry(feed.ID, "guid-1", "Entry 1")
+	entry.PublishedAt = &now
+	_ = CreateEntry(conn, entry)
+
+	// Test negative offset (SQLite treats as 0)
+	negativeOffset := -1
+	entries, err := ListEntries(conn, nil, nil, nil, nil, nil, nil, &negativeOffset)
+	if err != nil {
+		t.Fatalf("ListEntries with negative offset failed: %v", err)
+	}
+	// SQLite treats negative offset as 0, so should return all entries
+	if len(entries) != 1 {
+		t.Errorf("expected 1 entry with negative offset, got %d", len(entries))
+	}
+}
+
+func TestListEntries_OffsetLargerThanResultSet(t *testing.T) {
+	conn := setupTestDB(t)
+	defer conn.Close()
+
+	// Create a feed
+	feed := models.NewFeed("https://example.com/feed.xml")
+	_ = CreateFeed(conn, feed)
+
+	// Create a single entry
+	now := time.Now()
+	entry := models.NewEntry(feed.ID, "guid-1", "Entry 1")
+	entry.PublishedAt = &now
+	_ = CreateEntry(conn, entry)
+
+	// Test offset larger than result set
+	offset := 100
+	entries, err := ListEntries(conn, nil, nil, nil, nil, nil, nil, &offset)
+	if err != nil {
+		t.Fatalf("ListEntries with large offset failed: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("expected 0 entries with offset > result set, got %d", len(entries))
+	}
+}
+
+// Edge case tests for MarkEntriesReadBefore
+
+func TestMarkEntriesReadBefore_VeryLargeBatch(t *testing.T) {
+	conn := setupTestDB(t)
+	defer conn.Close()
+
+	// Create a feed
+	feed := models.NewFeed("https://example.com/feed.xml")
+	_ = CreateFeed(conn, feed)
+
+	// Create a large number of entries
+	now := time.Now()
+	batchSize := 100
+	for i := 0; i < batchSize; i++ {
+		entry := models.NewEntry(feed.ID, fmt.Sprintf("guid-%d", i), fmt.Sprintf("Entry %d", i))
+		publishedAt := now.Add(time.Duration(-i) * time.Hour)
+		entry.PublishedAt = &publishedAt
+		_ = CreateEntry(conn, entry)
+	}
+
+	// Mark all entries as read
+	cutoff := now.Add(time.Hour)
+	count, err := MarkEntriesReadBefore(conn, cutoff)
+	if err != nil {
+		t.Fatalf("MarkEntriesReadBefore with large batch failed: %v", err)
+	}
+	if count != int64(batchSize) {
+		t.Errorf("expected %d entries marked as read, got %d", batchSize, count)
+	}
+
+	// Verify all entries are read
+	unreadCount, _ := CountUnreadEntries(conn, nil)
+	if unreadCount != 0 {
+		t.Errorf("expected 0 unread entries after bulk operation, got %d", unreadCount)
+	}
+}
+
+func TestMarkEntriesReadBefore_BoundaryDate(t *testing.T) {
+	conn := setupTestDB(t)
+	defer conn.Close()
+
+	// Create a feed
+	feed := models.NewFeed("https://example.com/feed.xml")
+	_ = CreateFeed(conn, feed)
+
+	// Create entries with precise boundary times
+	now := time.Now()
+	exactlyBefore := now.Add(-1 * time.Hour)
+	exactlyAt := now
+	exactlyAfter := now.Add(1 * time.Hour)
+
+	entry1 := models.NewEntry(feed.ID, "guid-before", "Before Entry")
+	entry1.PublishedAt = &exactlyBefore
+	entry2 := models.NewEntry(feed.ID, "guid-at", "At Boundary Entry")
+	entry2.PublishedAt = &exactlyAt
+	entry3 := models.NewEntry(feed.ID, "guid-after", "After Entry")
+	entry3.PublishedAt = &exactlyAfter
+
+	_ = CreateEntry(conn, entry1)
+	_ = CreateEntry(conn, entry2)
+	_ = CreateEntry(conn, entry3)
+
+	// Mark entries before the exact boundary time
+	count, err := MarkEntriesReadBefore(conn, exactlyAt)
+	if err != nil {
+		t.Fatalf("MarkEntriesReadBefore at boundary failed: %v", err)
+	}
+	// Should mark only entry1 (entry2 is AT the boundary, not before)
+	if count != 1 {
+		t.Errorf("expected 1 entry marked as read, got %d", count)
+	}
+
+	// Verify entry at exact boundary is not marked as read
+	boundaryEntry, _ := GetEntryByID(conn, entry2.ID)
+	if boundaryEntry.Read {
+		t.Error("expected entry at exact boundary time to NOT be marked as read")
+	}
+
+	// Verify entry before boundary is marked as read
+	beforeEntry, _ := GetEntryByID(conn, entry1.ID)
+	if !beforeEntry.Read {
+		t.Error("expected entry before boundary to be marked as read")
+	}
+}
+
+func TestMarkEntriesReadBefore_AlreadyReadEntries(t *testing.T) {
+	conn := setupTestDB(t)
+	defer conn.Close()
+
+	// Create a feed
+	feed := models.NewFeed("https://example.com/feed.xml")
+	_ = CreateFeed(conn, feed)
+
+	// Create entries
+	now := time.Now()
+	past := now.Add(-24 * time.Hour)
+
+	entry1 := models.NewEntry(feed.ID, "guid-1", "Entry 1")
+	entry1.PublishedAt = &past
+	entry2 := models.NewEntry(feed.ID, "guid-2", "Entry 2")
+	entry2.PublishedAt = &past
+
+	_ = CreateEntry(conn, entry1)
+	_ = CreateEntry(conn, entry2)
+
+	// Mark one entry as read manually
+	_ = MarkEntryRead(conn, entry1.ID)
+
+	// Use MarkEntriesReadBefore - should only affect the unread entry
+	count, err := MarkEntriesReadBefore(conn, now)
+	if err != nil {
+		t.Fatalf("MarkEntriesReadBefore failed: %v", err)
+	}
+	// Should only mark entry2 (entry1 was already read)
+	if count != 1 {
+		t.Errorf("expected 1 entry marked as read (excluding already read), got %d", count)
+	}
+}
+
+// Concurrent access pattern tests
+
+func TestConcurrentReads(t *testing.T) {
+	conn := setupTestDB(t)
+	defer conn.Close()
+
+	// Create a feed
+	feed := models.NewFeed("https://example.com/feed.xml")
+	_ = CreateFeed(conn, feed)
+
+	// Create multiple entries
+	now := time.Now()
+	for i := 0; i < 10; i++ {
+		entry := models.NewEntry(feed.ID, fmt.Sprintf("guid-%d", i), fmt.Sprintf("Entry %d", i))
+		entry.PublishedAt = &now
+		_ = CreateEntry(conn, entry)
+	}
+
+	// Perform concurrent reads (SQLite supports multiple concurrent readers)
+	done := make(chan error, 20)
+	for i := 0; i < 20; i++ {
+		go func() {
+			_, err := ListEntries(conn, &feed.ID, nil, nil, nil, nil, nil, nil)
+			done <- err
+		}()
+	}
+
+	// Wait for all goroutines to complete and check for errors
+	for i := 0; i < 20; i++ {
+		if err := <-done; err != nil {
+			t.Errorf("ListEntries failed during concurrent reads: %v", err)
+		}
+	}
+}
+
+func TestConcurrentCountOperations(t *testing.T) {
+	conn := setupTestDB(t)
+	defer conn.Close()
+
+	// Create a feed
+	feed := models.NewFeed("https://example.com/feed.xml")
+	_ = CreateFeed(conn, feed)
+
+	// Create multiple entries
+	now := time.Now()
+	for i := 0; i < 10; i++ {
+		entry := models.NewEntry(feed.ID, fmt.Sprintf("guid-%d", i), fmt.Sprintf("Entry %d", i))
+		entry.PublishedAt = &now
+		_ = CreateEntry(conn, entry)
+	}
+
+	// Perform concurrent count operations (read-only)
+	done := make(chan error, 20)
+	for i := 0; i < 20; i++ {
+		go func() {
+			_, err := CountUnreadEntries(conn, &feed.ID)
+			done <- err
+		}()
+	}
+
+	// Wait for all goroutines to complete and check for errors
+	for i := 0; i < 20; i++ {
+		if err := <-done; err != nil {
+			t.Errorf("CountUnreadEntries failed during concurrent reads: %v", err)
+		}
 	}
 }
