@@ -125,7 +125,8 @@ func GetEntryByPrefix(db *sql.DB, prefix string) (*models.Entry, error) {
 // - since: filter by published_at >= since (nil = no time filter)
 // - until: filter by published_at < until (nil = no upper time bound)
 // - limit: maximum number of results (nil = no limit)
-func ListEntries(db *sql.DB, feedID *string, feedIDs []string, unreadOnly *bool, since *time.Time, until *time.Time, limit *int) ([]*models.Entry, error) {
+// - offset: number of results to skip (nil = 0)
+func ListEntries(db *sql.DB, feedID *string, feedIDs []string, unreadOnly *bool, since *time.Time, until *time.Time, limit *int, offset *int) ([]*models.Entry, error) {
 	query := `
 		SELECT id, feed_id, guid, title, link, author, published_at, content, read, read_at, created_at
 		FROM entries
@@ -165,6 +166,15 @@ func ListEntries(db *sql.DB, feedID *string, feedIDs []string, unreadOnly *bool,
 	if limit != nil {
 		query += " LIMIT ?"
 		args = append(args, *limit)
+	}
+
+	// SQLite requires LIMIT when using OFFSET; use -1 for unlimited
+	if offset != nil {
+		if limit == nil {
+			query += " LIMIT -1"
+		}
+		query += " OFFSET ?"
+		args = append(args, *offset)
 	}
 
 	rows, err := db.Query(query, args...)
@@ -233,20 +243,31 @@ func MarkEntryUnread(db *sql.DB, id string) error {
 
 // MarkEntriesReadBefore marks all unread entries published before the given time as read
 // Returns the number of entries that were marked as read
+// Uses a transaction to ensure atomicity for bulk operations
 func MarkEntriesReadBefore(db *sql.DB, before time.Time) (int64, error) {
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
 	query := `
 		UPDATE entries
 		SET read = TRUE, read_at = ?
 		WHERE published_at < ? AND read = FALSE
 	`
 	now := time.Now()
-	result, err := db.Exec(query, now, before)
+	result, err := tx.Exec(query, now, before)
 	if err != nil {
 		return 0, fmt.Errorf("failed to mark entries as read: %w", err)
 	}
 	count, err := result.RowsAffected()
 	if err != nil {
 		return 0, fmt.Errorf("failed to get affected rows: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 	return count, nil
 }

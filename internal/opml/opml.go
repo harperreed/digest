@@ -14,6 +14,7 @@ import (
 type Document struct {
 	Title    string
 	Outlines []Outline
+	feedURLs map[string]bool // URL index for O(1) lookups
 }
 
 // Outline represents a node in the OPML tree structure
@@ -62,6 +63,7 @@ func NewDocument(title string) *Document {
 	return &Document{
 		Title:    title,
 		Outlines: []Outline{},
+		feedURLs: make(map[string]bool),
 	}
 }
 
@@ -82,7 +84,23 @@ func Parse(r io.Reader) (*Document, error) {
 		doc.Outlines[i] = convertOutlineFromXML(outline)
 	}
 
+	doc.rebuildURLIndex()
 	return doc, nil
+}
+
+// rebuildURLIndex rebuilds the feedURLs map from the current outline structure
+func (d *Document) rebuildURLIndex() {
+	d.feedURLs = make(map[string]bool)
+	for _, feed := range d.AllFeeds() {
+		d.feedURLs[feed.URL] = true
+	}
+}
+
+// ensureURLIndex initializes the feedURLs map if nil (defensive programming)
+func (d *Document) ensureURLIndex() {
+	if d.feedURLs == nil {
+		d.rebuildURLIndex()
+	}
 }
 
 // ParseFile reads OPML data from a file and returns a Document
@@ -178,12 +196,11 @@ func (d *Document) AddFolder(name string) error {
 // Creates the folder if it doesn't exist
 // Returns an error if a feed with the same URL already exists
 func (d *Document) AddFeed(url, title, folder string) error {
-	// Check if feed already exists
-	allFeeds := d.AllFeeds()
-	for _, f := range allFeeds {
-		if f.URL == url {
-			return fmt.Errorf("feed with URL %s already exists", url)
-		}
+	// Ensure URL index is initialized
+	d.ensureURLIndex()
+	// O(1) check using URL index
+	if d.feedURLs[url] {
+		return fmt.Errorf("feed with URL %s already exists", url)
 	}
 
 	feed := Outline{
@@ -218,6 +235,8 @@ func (d *Document) AddFeed(url, title, folder string) error {
 		}
 	}
 
+	// Update URL index
+	d.feedURLs[url] = true
 	return nil
 }
 
@@ -250,6 +269,7 @@ func (d *Document) MoveFeed(url, newFolder string) error {
 
 // addFeedInternal adds a feed without checking for duplicates
 func (d *Document) addFeedInternal(url, title, folder string) {
+	d.ensureURLIndex()
 	feed := Outline{
 		Text:   title,
 		Title:  title,
@@ -281,14 +301,19 @@ func (d *Document) addFeedInternal(url, title, folder string) {
 			d.Outlines[folderIndex].Children = append(d.Outlines[folderIndex].Children, feed)
 		}
 	}
+
+	// Update URL index
+	d.feedURLs[url] = true
 }
 
 // RemoveFeed removes a feed from the document by URL
 func (d *Document) RemoveFeed(url string) error {
+	d.ensureURLIndex()
 	// Check root level
 	for i, outline := range d.Outlines {
 		if outline.XMLURL == url {
 			d.Outlines = append(d.Outlines[:i], d.Outlines[i+1:]...)
+			delete(d.feedURLs, url)
 			return nil
 		}
 	}
@@ -302,6 +327,7 @@ func (d *Document) RemoveFeed(url string) error {
 						d.Outlines[i].Children[:j],
 						d.Outlines[i].Children[j+1:]...,
 					)
+					delete(d.feedURLs, url)
 					return nil
 				}
 			}

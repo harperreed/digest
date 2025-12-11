@@ -96,6 +96,7 @@ type ListEntriesInput struct {
 	Since      *string `json:"since,omitempty"`
 	Until      *string `json:"until,omitempty"`
 	Limit      *int    `json:"limit,omitempty"`
+	Offset     *int    `json:"offset,omitempty"`
 }
 
 type EntryOutput struct {
@@ -292,6 +293,10 @@ func (s *Server) registerListEntriesTool() {
 				"limit": map[string]interface{}{
 					"type":        "integer",
 					"description": "Maximum number of entries to return. If omitted, returns all matching entries. Example: 50",
+				},
+				"offset": map[string]interface{}{
+					"type":        "integer",
+					"description": "Number of entries to skip for pagination. Use with limit for paging through results. Example: 20 to skip first 20 entries",
 				},
 			},
 		},
@@ -727,9 +732,15 @@ func (s *Server) handleListEntries(_ context.Context, req mcp.CallToolRequest) (
 		}
 		until = &t
 	}
+	if input.Offset != nil && *input.Offset < 0 {
+		return nil, fmt.Errorf("offset must be non-negative, got %d", *input.Offset)
+	}
+	if input.Limit != nil && *input.Limit < 0 {
+		return nil, fmt.Errorf("limit must be non-negative, got %d", *input.Limit)
+	}
 
 	// List entries with filters
-	entries, err := db.ListEntries(s.db, input.FeedID, nil, input.UnreadOnly, since, until, input.Limit)
+	entries, err := db.ListEntries(s.db, input.FeedID, nil, input.UnreadOnly, since, until, input.Limit, input.Offset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list entries: %w", err)
 	}
@@ -766,6 +777,9 @@ func (s *Server) handleListEntries(_ context.Context, req mcp.CallToolRequest) (
 	}
 	if input.Limit != nil {
 		filters["limit"] = *input.Limit
+	}
+	if input.Offset != nil {
+		filters["offset"] = *input.Offset
 	}
 
 	output := ListEntriesOutput{

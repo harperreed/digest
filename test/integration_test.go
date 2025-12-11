@@ -111,7 +111,7 @@ func TestFullWorkflow(t *testing.T) {
 	t.Logf("Created %d entries in database", entriesCreated)
 
 	// Verify database contains entries
-	entries, err := db.ListEntries(database, &feed.ID, nil, nil, nil, nil, nil)
+	entries, err := db.ListEntries(database, &feed.ID, nil, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("failed to list entries: %v", err)
 	}

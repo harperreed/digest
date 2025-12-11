@@ -24,6 +24,7 @@ var listCmd = &cobra.Command{
 		feedFilter, _ := cmd.Flags().GetString("feed")
 		category, _ := cmd.Flags().GetString("category")
 		limit, _ := cmd.Flags().GetInt("limit")
+		offset, _ := cmd.Flags().GetInt("offset")
 		today, _ := cmd.Flags().GetBool("today")
 		yesterday, _ := cmd.Flags().GetBool("yesterday")
 		week, _ := cmd.Flags().GetBool("week")
@@ -89,7 +90,7 @@ var listCmd = &cobra.Command{
 		}
 
 		// List entries
-		entries, err := db.ListEntries(dbConn, feedID, feedIDs, &unreadOnly, since, until, &limit)
+		entries, err := db.ListEntries(dbConn, feedID, feedIDs, &unreadOnly, since, until, &limit, &offset)
 		if err != nil {
 			return fmt.Errorf("failed to list entries: %w", err)
 		}
@@ -147,6 +148,7 @@ func init() {
 	listCmd.Flags().StringP("feed", "f", "", "filter by feed URL or prefix")
 	listCmd.Flags().StringP("category", "c", "", "filter by feed category/folder")
 	listCmd.Flags().IntP("limit", "n", 20, "max entries to show")
+	listCmd.Flags().IntP("offset", "o", 0, "number of entries to skip (for pagination)")
 	listCmd.Flags().Bool("today", false, "show only today's entries")
 	listCmd.Flags().Bool("yesterday", false, "show only yesterday's entries")
 	listCmd.Flags().Bool("week", false, "show only this week's entries")

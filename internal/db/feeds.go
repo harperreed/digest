@@ -149,3 +149,84 @@ func UpdateFeedError(db *sql.DB, feedID string, errMsg string) error {
 	)
 	return err
 }
+
+// FeedStatsRow represents statistics for a single feed.
+type FeedStatsRow struct {
+	FeedID        string
+	FeedURL       string
+	FeedTitle     *string
+	LastFetchedAt *time.Time
+	ErrorCount    int
+	LastError     *string
+	EntryCount    int
+	UnreadCount   int
+}
+
+// GetFeedStats retrieves statistics for all feeds in a single query using JOINs.
+func GetFeedStats(db *sql.DB) ([]FeedStatsRow, error) {
+	rows, err := db.Query(`
+		SELECT
+			f.id,
+			f.url,
+			f.title,
+			f.last_fetched_at,
+			f.error_count,
+			f.last_error,
+			COALESCE(COUNT(e.id), 0) as entry_count,
+			COALESCE(SUM(CASE WHEN e.read = 0 THEN 1 ELSE 0 END), 0) as unread_count
+		FROM feeds f
+		LEFT JOIN entries e ON f.id = e.feed_id
+		GROUP BY f.id, f.url, f.title, f.last_fetched_at, f.error_count, f.last_error
+		ORDER BY f.created_at DESC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query feed stats: %w", err)
+	}
+	defer rows.Close()
+
+	var stats []FeedStatsRow
+	for rows.Next() {
+		var stat FeedStatsRow
+		if err := rows.Scan(
+			&stat.FeedID,
+			&stat.FeedURL,
+			&stat.FeedTitle,
+			&stat.LastFetchedAt,
+			&stat.ErrorCount,
+			&stat.LastError,
+			&stat.EntryCount,
+			&stat.UnreadCount,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan feed stat: %w", err)
+		}
+		stats = append(stats, stat)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating feed stats: %w", err)
+	}
+
+	return stats, nil
+}
+
+// OverallStats represents overall database statistics.
+type OverallStats struct {
+	TotalFeeds   int
+	TotalEntries int
+	UnreadCount  int
+}
+
+// GetOverallStats retrieves overall statistics in a single query.
+func GetOverallStats(db *sql.DB) (*OverallStats, error) {
+	var stats OverallStats
+	err := db.QueryRow(`
+		SELECT
+			(SELECT COUNT(*) FROM feeds) as total_feeds,
+			(SELECT COUNT(*) FROM entries) as total_entries,
+			(SELECT COUNT(*) FROM entries WHERE read = 0) as unread_count
+	`).Scan(&stats.TotalFeeds, &stats.TotalEntries, &stats.UnreadCount)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query overall stats: %w", err)
+	}
+	return &stats, nil
+}

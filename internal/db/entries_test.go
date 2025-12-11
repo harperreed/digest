@@ -98,7 +98,7 @@ func TestListEntries_Unread(t *testing.T) {
 
 	// List unread entries only
 	unreadOnly := true
-	entries, err := ListEntries(conn, &feed.ID, nil, &unreadOnly, nil, nil, nil)
+	entries, err := ListEntries(conn, &feed.ID, nil, &unreadOnly, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("ListEntries failed: %v", err)
 	}
@@ -332,7 +332,7 @@ func TestListEntries_WithFilters(t *testing.T) {
 
 	// Test with since filter
 	sinceTime := now.Add(-1 * time.Hour)
-	entries, err := ListEntries(conn, nil, nil, nil, &sinceTime, nil, nil)
+	entries, err := ListEntries(conn, nil, nil, nil, &sinceTime, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("ListEntries failed: %v", err)
 	}
@@ -342,7 +342,7 @@ func TestListEntries_WithFilters(t *testing.T) {
 
 	// Test with limit
 	limit := 2
-	entries, err = ListEntries(conn, nil, nil, nil, nil, nil, &limit)
+	entries, err = ListEntries(conn, nil, nil, nil, nil, nil, &limit, nil)
 	if err != nil {
 		t.Fatalf("ListEntries failed: %v", err)
 	}
@@ -352,7 +352,7 @@ func TestListEntries_WithFilters(t *testing.T) {
 
 	// Test with until filter (should only return entry1 which is in the past)
 	untilTime := now.Add(-12 * time.Hour)
-	entries, err = ListEntries(conn, nil, nil, nil, nil, &untilTime, nil)
+	entries, err = ListEntries(conn, nil, nil, nil, nil, &untilTime, nil, nil)
 	if err != nil {
 		t.Fatalf("ListEntries with until failed: %v", err)
 	}
@@ -363,7 +363,7 @@ func TestListEntries_WithFilters(t *testing.T) {
 	// Test with since AND until (yesterday's window)
 	sinceYesterday := now.Add(-25 * time.Hour)
 	untilYesterday := now.Add(-23 * time.Hour)
-	entries, err = ListEntries(conn, nil, nil, nil, &sinceYesterday, &untilYesterday, nil)
+	entries, err = ListEntries(conn, nil, nil, nil, &sinceYesterday, &untilYesterday, nil, nil)
 	if err != nil {
 		t.Fatalf("ListEntries with since and until failed: %v", err)
 	}
@@ -394,7 +394,7 @@ func TestListEntries_ByFeedIDs(t *testing.T) {
 
 	// Test filtering by multiple feed IDs
 	feedIDs := []string{feed1.ID, feed2.ID}
-	entries, err := ListEntries(conn, nil, feedIDs, nil, nil, nil, nil)
+	entries, err := ListEntries(conn, nil, feedIDs, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("ListEntries with feedIDs failed: %v", err)
 	}
@@ -412,7 +412,7 @@ func TestListEntries_ByFeedIDs(t *testing.T) {
 
 	// Test with single feed in array (should work same as feedID)
 	feedIDs = []string{feed3.ID}
-	entries, err = ListEntries(conn, nil, feedIDs, nil, nil, nil, nil)
+	entries, err = ListEntries(conn, nil, feedIDs, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("ListEntries with single feedID in array failed: %v", err)
 	}
@@ -422,7 +422,7 @@ func TestListEntries_ByFeedIDs(t *testing.T) {
 	}
 
 	// Test feedIDs takes precedence over feedID
-	entries, err = ListEntries(conn, &feed1.ID, []string{feed2.ID, feed3.ID}, nil, nil, nil, nil)
+	entries, err = ListEntries(conn, &feed1.ID, []string{feed2.ID, feed3.ID}, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("ListEntries with both feedID and feedIDs failed: %v", err)
 	}

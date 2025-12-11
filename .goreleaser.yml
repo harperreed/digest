@@ -1,5 +1,5 @@
 # ABOUTME: GoReleaser configuration for digest RSS/Atom feed tracker
-# ABOUTME: Builds for macOS due to CGO requirements for SQLite
+# ABOUTME: Builds for macOS, Linux, and Windows using pure Go SQLite (modernc.org/sqlite)
 version: 2
 
 before:
@@ -12,12 +12,11 @@ builds:
     binary: digest
     main: ./cmd/digest
     env:
-      - CGO_ENABLED=1
-    # Build for macOS only due to CGO requirements for SQLite
-    # Cross-compilation to Linux with CGO is complex and requires Docker
-    # For Linux builds, users can build from source or we can add Docker-based builds later
+      - CGO_ENABLED=0
     goos:
       - darwin
+      - linux
+      - windows
     goarch:
       - amd64
       - arm64

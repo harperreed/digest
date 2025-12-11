@@ -122,7 +122,7 @@ func (s *Server) registerEntriesUnreadResource() {
 		},
 		func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
 			unreadOnly := true
-			entries, err := db.ListEntries(s.db, nil, nil, &unreadOnly, nil, nil, nil)
+			entries, err := db.ListEntries(s.db, nil, nil, &unreadOnly, nil, nil, nil, nil)
 			if err != nil {
 				return nil, fmt.Errorf("failed to list unread entries: %w", err)
 			}
@@ -203,7 +203,7 @@ func (s *Server) registerEntriesTodayResource() {
 			// Calculate start of today (midnight local time) - consistent with CLI and timeutil
 			startOfDay := timeutil.StartOfToday()
 
-			entries, err := db.ListEntries(s.db, nil, nil, nil, &startOfDay, nil, nil)
+			entries, err := db.ListEntries(s.db, nil, nil, nil, &startOfDay, nil, nil, nil)
 			if err != nil {
 				return nil, fmt.Errorf("failed to list today's entries: %w", err)
 			}
@@ -350,71 +350,52 @@ type SyncInfo struct {
 }
 
 func (s *Server) calculateStats() (*StatsData, error) {
-	// Fetch all feeds
-	feeds, err := db.ListFeeds(s.db)
+	// Get overall stats in a single query
+	overallStats, err := db.GetOverallStats(s.db)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list feeds: %w", err)
+		return nil, fmt.Errorf("failed to get overall stats: %w", err)
 	}
 
-	// Fetch all entries
-	allEntries, err := db.ListEntries(s.db, nil, nil, nil, nil, nil, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list entries: %w", err)
-	}
-
-	// Calculate summary stats
 	summary := StatsSummary{
-		TotalFeeds:   len(feeds),
-		TotalEntries: len(allEntries),
+		TotalFeeds:   overallStats.TotalFeeds,
+		TotalEntries: overallStats.TotalEntries,
+		UnreadCount:  overallStats.UnreadCount,
 	}
 
-	// Count unread across all feeds
-	unreadCount, err := db.CountUnreadEntries(s.db, nil)
+	// Get per-feed stats with a single JOIN query
+	feedStats, err := db.GetFeedStats(s.db)
 	if err != nil {
-		return nil, fmt.Errorf("failed to count unread entries: %w", err)
+		return nil, fmt.Errorf("failed to get feed stats: %w", err)
 	}
-	summary.UnreadCount = unreadCount
 
-	// Build per-feed stats
-	byFeed := make([]FeedStats, 0, len(feeds))
+	// Build per-feed stats and track most recent sync
+	byFeed := make([]FeedStats, 0, len(feedStats))
 	var lastSync *SyncInfo
 
-	for _, feed := range feeds {
-		// Count entries for this feed
-		feedEntries, err := db.ListEntries(s.db, &feed.ID, nil, nil, nil, nil, nil)
-		if err != nil {
-			return nil, fmt.Errorf("failed to list entries for feed %s: %w", feed.ID, err)
-		}
-
-		// Count unread for this feed
-		feedUnreadCount, err := db.CountUnreadEntries(s.db, &feed.ID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to count unread for feed %s: %w", feed.ID, err)
-		}
-
+	for _, stat := range feedStats {
 		feedTitle := "Untitled Feed"
-		if feed.Title != nil {
-			feedTitle = *feed.Title
+		if stat.FeedTitle != nil {
+			feedTitle = *stat.FeedTitle
 		}
 
 		feedStat := FeedStats{
-			FeedID:      feed.ID,
+			FeedID:      stat.FeedID,
 			FeedTitle:   feedTitle,
-			FeedURL:     feed.URL,
-			EntryCount:  len(feedEntries),
-			UnreadCount: feedUnreadCount,
-			LastFetched: feed.LastFetchedAt,
-			ErrorCount:  feed.ErrorCount,
-			HasErrors:   feed.LastError != nil,
+			FeedURL:     stat.FeedURL,
+			EntryCount:  stat.EntryCount,
+			UnreadCount: stat.UnreadCount,
+			LastFetched: stat.LastFetchedAt,
+			ErrorCount:  stat.ErrorCount,
+			HasErrors:   stat.LastError != nil,
 		}
 		byFeed = append(byFeed, feedStat)
 
 		// Track most recent sync
-		if feed.LastFetchedAt != nil {
-			if lastSync == nil || feed.LastFetchedAt.After(*lastSync.LastFetchedAt) {
+		if stat.LastFetchedAt != nil {
+			if lastSync == nil || stat.LastFetchedAt.After(*lastSync.LastFetchedAt) {
 				lastSync = &SyncInfo{
-					LastFetchedAt: feed.LastFetchedAt,
-					FeedID:        feed.ID,
+					LastFetchedAt: stat.LastFetchedAt,
+					FeedID:        stat.FeedID,
 					FeedTitle:     feedTitle,
 				}
 			}
