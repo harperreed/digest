@@ -4,6 +4,8 @@
 package main
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -32,10 +34,13 @@ var markReadCmd = &cobra.Command{
 			// Get entry by ID or prefix
 			entry, err := db.GetEntryByID(dbConn, entryRef)
 			if err != nil {
-				// Try prefix match
+				// Only try prefix match if entry was not found (not for other DB errors)
+				if !errors.Is(err, sql.ErrNoRows) {
+					return fmt.Errorf("failed to get entry: %w", err)
+				}
 				entry, err = db.GetEntryByPrefix(dbConn, entryRef)
 				if err != nil {
-					return fmt.Errorf("failed to find entry: %w", err)
+					return fmt.Errorf("entry not found: %s", entryRef)
 				}
 			}
 

@@ -66,20 +66,17 @@ func GetEntryByID(db *sql.DB, id string) (*models.Entry, error) {
 
 // GetEntryByPrefix finds an entry by ID prefix (minimum 6 characters)
 // Returns an error if the prefix is ambiguous (matches multiple entries)
+// UUIDs only contain hex characters (0-9, a-f) and hyphens, so no SQL wildcard escaping is needed
 func GetEntryByPrefix(db *sql.DB, prefix string) (*models.Entry, error) {
 	if len(prefix) < 6 {
 		return nil, fmt.Errorf("prefix must be at least 6 characters")
 	}
 
-	// Escape SQL wildcards in prefix
-	escapedPrefix := strings.ReplaceAll(prefix, "%", "\\%")
-	escapedPrefix = strings.ReplaceAll(escapedPrefix, "_", "\\_")
-
 	rows, err := db.Query(`
 		SELECT id, feed_id, guid, title, link, author, published_at, content, read, read_at, created_at
 		FROM entries
-		WHERE id LIKE ? ESCAPE '\'`,
-		escapedPrefix+"%",
+		WHERE id LIKE ?`,
+		prefix+"%",
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query entries by prefix: %w", err)

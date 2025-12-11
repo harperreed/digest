@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/harper/digest/internal/db"
+	"github.com/harper/digest/internal/timeutil"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
@@ -195,13 +196,12 @@ func (s *Server) registerEntriesTodayResource() {
 		mcp.Resource{
 			URI:         "digest://entries/today",
 			Name:        "Today's Entries",
-			Description: "List all feed entries published today (since midnight UTC), regardless of read status",
+			Description: "List all feed entries published today (since midnight local time), regardless of read status",
 			MIMEType:    "application/json",
 		},
 		func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-			// Calculate start of today (midnight UTC)
-			now := time.Now().UTC()
-			startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+			// Calculate start of today (midnight local time) - consistent with CLI and timeutil
+			startOfDay := timeutil.StartOfToday()
 
 			entries, err := db.ListEntries(s.db, nil, nil, nil, &startOfDay, nil, nil)
 			if err != nil {

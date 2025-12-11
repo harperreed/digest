@@ -4,6 +4,8 @@
 package main
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -27,10 +29,13 @@ var readCmd = &cobra.Command{
 		// Get entry by ID or prefix
 		entry, err := db.GetEntryByID(dbConn, entryRef)
 		if err != nil {
-			// Try prefix match
+			// Only try prefix match if entry was not found (not for other DB errors)
+			if !errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("failed to get entry: %w", err)
+			}
 			entry, err = db.GetEntryByPrefix(dbConn, entryRef)
 			if err != nil {
-				return fmt.Errorf("failed to find entry: %w", err)
+				return fmt.Errorf("entry not found: %s", entryRef)
 			}
 		}
 
@@ -88,6 +93,7 @@ var readCmd = &cobra.Command{
 			rendered, err := glamour.Render(markdown, "dark")
 			if err != nil {
 				// Fall back to plain markdown if rendering fails
+				fmt.Printf("%s\n", faint("(markdown rendering unavailable, showing plain text)"))
 				fmt.Printf("\n%s\n", markdown)
 			} else {
 				fmt.Print(rendered)
