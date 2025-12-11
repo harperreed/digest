@@ -49,11 +49,7 @@ func (s *Server) ServeStdio() error {
 }
 
 // registerTools is implemented in tools.go
-
-// registerResources registers MCP resources (stub)
-func (s *Server) registerResources() {
-	// Will be implemented in next tasks
-}
+// registerResources is implemented in resources.go
 
 // registerPrompts registers MCP prompts (stub)
 func (s *Server) registerPrompts() {
