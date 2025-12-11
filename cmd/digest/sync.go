@@ -1,0 +1,191 @@
+// ABOUTME: Sync command to fetch new entries from RSS/Atom feeds with HTTP caching support
+// ABOUTME: Handles batch syncing of all feeds or individual feed sync with colored progress output
+
+package main
+
+import (
+	"fmt"
+	"time"
+
+	"github.com/fatih/color"
+	"github.com/spf13/cobra"
+
+	"github.com/harper/digest/internal/db"
+	"github.com/harper/digest/internal/fetch"
+	"github.com/harper/digest/internal/models"
+	"github.com/harper/digest/internal/parse"
+)
+
+var syncCmd = &cobra.Command{
+	Use:   "sync [url]",
+	Short: "Fetch new entries from feeds",
+	Long: `Fetch new entries from all subscribed feeds or a specific feed by URL.
+
+Uses HTTP caching headers (ETag, Last-Modified) to avoid re-fetching unchanged content.
+Use --force to ignore cache headers and fetch unconditionally.`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		force, _ := cmd.Flags().GetBool("force")
+
+		// Get all feeds from database
+		feeds, err := db.ListFeeds(dbConn)
+		if err != nil {
+			return fmt.Errorf("failed to list feeds: %w", err)
+		}
+
+		if len(feeds) == 0 {
+			fmt.Println("No feeds found. Add a feed with 'digest feed add <url>'")
+			return nil
+		}
+
+		// Filter to specific URL if provided
+		if len(args) == 1 {
+			targetURL := args[0]
+			filtered := []*models.Feed{}
+			for _, feed := range feeds {
+				if feed.URL == targetURL {
+					filtered = append(filtered, feed)
+					break
+				}
+			}
+			if len(filtered) == 0 {
+				return fmt.Errorf("feed not found: %s", targetURL)
+			}
+			feeds = filtered
+		}
+
+		// Sync each feed
+		totalNew := 0
+		totalCached := 0
+		totalErrors := 0
+
+		green := color.New(color.FgGreen).SprintFunc()
+		red := color.New(color.FgRed).SprintFunc()
+		faint := color.New(color.Faint).SprintFunc()
+
+		for _, feed := range feeds {
+			displayName := feedDisplayName(feed)
+			fmt.Printf("Syncing %s... ", displayName)
+
+			newCount, wasCached, err := syncFeed(feed, force)
+			if err != nil {
+				fmt.Printf("%s %s\n", red("✗"), err.Error())
+				totalErrors++
+				continue
+			}
+
+			if wasCached {
+				fmt.Printf("%s (cached)\n", faint("—"))
+				totalCached++
+			} else if newCount > 0 {
+				fmt.Printf("%s %d new\n", green("✓"), newCount)
+				totalNew += newCount
+			} else {
+				fmt.Printf("%s no new entries\n", green("✓"))
+			}
+		}
+
+		// Print summary
+		fmt.Println()
+		fmt.Printf("Summary: %d feed(s) synced\n", len(feeds))
+		if totalNew > 0 {
+			fmt.Printf("  %s %d new entries\n", green("✓"), totalNew)
+		}
+		if totalCached > 0 {
+			fmt.Printf("  %s %d cached (not modified)\n", faint("—"), totalCached)
+		}
+		if totalErrors > 0 {
+			fmt.Printf("  %s %d errors\n", red("✗"), totalErrors)
+		}
+
+		return nil
+	},
+}
+
+// syncFeed fetches and processes a single feed, returning the count of new entries
+func syncFeed(feed *models.Feed, force bool) (newCount int, wasCached bool, err error) {
+	// Get cache headers from feed (skip if force)
+	var etag, lastModified *string
+	if !force {
+		etag = feed.ETag
+		lastModified = feed.LastModified
+	}
+
+	// Fetch the feed
+	result, err := fetch.Fetch(feed.URL, etag, lastModified)
+	if err != nil {
+		// Update error state in database
+		if updateErr := db.UpdateFeedError(dbConn, feed.ID, err.Error()); updateErr != nil {
+			return 0, false, fmt.Errorf("fetch failed and error update failed: %w (original: %v)", updateErr, err)
+		}
+		return 0, false, err
+	}
+
+	// Handle 304 Not Modified
+	if result.NotModified {
+		return 0, true, nil
+	}
+
+	// Parse the feed
+	parsed, err := parse.Parse(result.Body)
+	if err != nil {
+		errMsg := fmt.Sprintf("failed to parse feed: %v", err)
+		if updateErr := db.UpdateFeedError(dbConn, feed.ID, errMsg); updateErr != nil {
+			return 0, false, fmt.Errorf("parse failed and error update failed: %w (original: %v)", updateErr, err)
+		}
+		return 0, false, fmt.Errorf("failed to parse feed: %w", err)
+	}
+
+	// Update feed title if empty
+	if feed.Title == nil || *feed.Title == "" {
+		feed.Title = &parsed.Title
+	}
+
+	// Process entries
+	newCount = 0
+	for _, parsedEntry := range parsed.Entries {
+		// Check if entry already exists
+		exists, err := db.EntryExists(dbConn, feed.ID, parsedEntry.GUID)
+		if err != nil {
+			return newCount, false, fmt.Errorf("failed to check entry existence: %w", err)
+		}
+
+		if exists {
+			continue
+		}
+
+		// Create new entry
+		entry := models.NewEntry(feed.ID, parsedEntry.GUID, parsedEntry.Title)
+		entry.Link = &parsedEntry.Link
+		entry.Author = &parsedEntry.Author
+		entry.PublishedAt = parsedEntry.PublishedAt
+		entry.Content = &parsedEntry.Content
+
+		if err := db.CreateEntry(dbConn, entry); err != nil {
+			return newCount, false, fmt.Errorf("failed to create entry: %w", err)
+		}
+
+		newCount++
+	}
+
+	// Update feed fetch state
+	fetchedAt := time.Now()
+	if err := db.UpdateFeedFetchState(dbConn, feed.ID, &result.ETag, &result.LastModified, fetchedAt); err != nil {
+		return newCount, false, fmt.Errorf("failed to update feed state: %w", err)
+	}
+
+	return newCount, false, nil
+}
+
+// feedDisplayName returns a human-readable name for the feed
+func feedDisplayName(feed *models.Feed) string {
+	if feed.Title != nil && *feed.Title != "" {
+		return *feed.Title
+	}
+	return feed.URL
+}
+
+func init() {
+	rootCmd.AddCommand(syncCmd)
+	syncCmd.Flags().BoolP("force", "f", false, "ignore cache headers and force fetch")
+}
