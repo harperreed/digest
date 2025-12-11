@@ -42,6 +42,27 @@ Full MCP integration for AI agents to manage feeds:
 | `digest://entries/today` | Today's entries |
 | `digest://stats` | Feed statistics |
 
+### MCP Prompts
+Workflow templates for common RSS management tasks:
+
+| Prompt | Description |
+|--------|-------------|
+| `daily-digest` | Morning routine to summarize today's entries, prioritize content, and generate a digest |
+| `catch-up` | Efficiently process backlog after time away - triage, prioritize, declare bankruptcy on low-value feeds |
+| `curate-feeds` | Quarterly review to remove low-value feeds, identify gaps, and optimize subscriptions |
+
+**Example prompt usage:**
+```
+# Morning digest
+Use the daily-digest prompt to catch up on today's news
+
+# After vacation
+Use the catch-up prompt with days=14 to process two weeks of entries
+
+# Feed cleanup
+Use the curate-feeds prompt to optimize my subscriptions
+```
+
 ## Installation
 
 ```bash
