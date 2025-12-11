@@ -56,6 +56,19 @@ type RemoveFeedOutput struct {
 	URL     string `json:"url"`
 }
 
+type MoveFeedInput struct {
+	URL    string `json:"url"`
+	Folder string `json:"folder"`
+}
+
+type MoveFeedOutput struct {
+	Success   bool   `json:"success"`
+	Message   string `json:"message"`
+	URL       string `json:"url"`
+	OldFolder string `json:"old_folder"`
+	NewFolder string `json:"new_folder"`
+}
+
 type SyncFeedsInput struct {
 	URL   *string `json:"url,omitempty"`
 	Force *bool   `json:"force,omitempty"`
@@ -145,6 +158,7 @@ func (s *Server) registerTools() {
 	s.registerListFeedsTool()
 	s.registerAddFeedTool()
 	s.registerRemoveFeedTool()
+	s.registerMoveFeedTool()
 	s.registerSyncFeedsTool()
 	s.registerListEntriesTool()
 	s.registerGetEntryTool()
@@ -207,6 +221,28 @@ func (s *Server) registerRemoveFeedTool() {
 		},
 	}
 	s.mcpServer.AddTool(tool, s.handleRemoveFeed)
+}
+
+func (s *Server) registerMoveFeedTool() {
+	tool := mcp.Tool{
+		Name:        "move_feed",
+		Description: "Move a feed to a different folder/category in the OPML file. Use this to reorganize feeds after they've been added. If the target folder doesn't exist, it will be created. Use an empty string for folder to move to the root level.",
+		InputSchema: mcp.ToolInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"url": map[string]interface{}{
+					"type":        "string",
+					"description": "The feed URL to move. Must match exactly. Example: 'https://example.com/feed.xml'",
+				},
+				"folder": map[string]interface{}{
+					"type":        "string",
+					"description": "Target folder name. Use empty string '' to move to root level. Example: 'Tech Blogs'",
+				},
+			},
+			Required: []string{"url", "folder"},
+		},
+	}
+	s.mcpServer.AddTool(tool, s.handleMoveFeed)
 }
 
 func (s *Server) registerSyncFeedsTool() {
@@ -494,6 +530,47 @@ func (s *Server) handleRemoveFeed(_ context.Context, req mcp.CallToolRequest) (*
 		Success: true,
 		Message: fmt.Sprintf("Feed '%s' and all its entries successfully removed", input.URL),
 		URL:     input.URL,
+	}
+
+	jsonBytes, err := json.MarshalIndent(output, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal output: %w", err)
+	}
+
+	return mcp.NewToolResultText(string(jsonBytes)), nil
+}
+
+func (s *Server) handleMoveFeed(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	var input MoveFeedInput
+	if err := req.BindArguments(&input); err != nil {
+		return nil, fmt.Errorf("invalid input: %w", err)
+	}
+
+	// Find current folder for the feed
+	oldFolder := ""
+	for _, feed := range s.opmlDoc.AllFeeds() {
+		if feed.URL == input.URL {
+			oldFolder = feed.Folder
+			break
+		}
+	}
+
+	// Move the feed
+	if err := s.opmlDoc.MoveFeed(input.URL, input.Folder); err != nil {
+		return nil, fmt.Errorf("failed to move feed: %w", err)
+	}
+
+	// Write OPML back to file
+	if err := s.opmlDoc.WriteFile(s.opmlPath); err != nil {
+		return nil, fmt.Errorf("failed to write OPML file: %w", err)
+	}
+
+	output := MoveFeedOutput{
+		Success:   true,
+		Message:   fmt.Sprintf("Feed moved from '%s' to '%s'", oldFolder, input.Folder),
+		URL:       input.URL,
+		OldFolder: oldFolder,
+		NewFolder: input.Folder,
 	}
 
 	jsonBytes, err := json.MarshalIndent(output, "", "  ")
