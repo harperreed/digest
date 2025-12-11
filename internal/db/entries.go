@@ -1,0 +1,230 @@
+// ABOUTME: Entry database operations and CRUD functions
+// ABOUTME: Handles creating, reading, updating entries with flexible filtering
+
+package db
+
+import (
+	"database/sql"
+	"fmt"
+	"time"
+
+	"github.com/harper/digest/internal/models"
+)
+
+// CreateEntry inserts a new entry into the database
+func CreateEntry(db *sql.DB, entry *models.Entry) error {
+	query := `
+		INSERT INTO entries (id, feed_id, guid, title, link, author, published_at, content, read, read_at, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`
+	_, err := db.Exec(query,
+		entry.ID,
+		entry.FeedID,
+		entry.GUID,
+		entry.Title,
+		entry.Link,
+		entry.Author,
+		entry.PublishedAt,
+		entry.Content,
+		entry.Read,
+		entry.ReadAt,
+		entry.CreatedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create entry: %w", err)
+	}
+	return nil
+}
+
+// GetEntryByID retrieves an entry by its ID
+func GetEntryByID(db *sql.DB, id string) (*models.Entry, error) {
+	query := `
+		SELECT id, feed_id, guid, title, link, author, published_at, content, read, read_at, created_at
+		FROM entries
+		WHERE id = ?
+	`
+	entry := &models.Entry{}
+	err := db.QueryRow(query, id).Scan(
+		&entry.ID,
+		&entry.FeedID,
+		&entry.GUID,
+		&entry.Title,
+		&entry.Link,
+		&entry.Author,
+		&entry.PublishedAt,
+		&entry.Content,
+		&entry.Read,
+		&entry.ReadAt,
+		&entry.CreatedAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get entry: %w", err)
+	}
+	return entry, nil
+}
+
+// GetEntryByPrefix finds an entry by ID prefix (minimum 6 characters)
+func GetEntryByPrefix(db *sql.DB, prefix string) (*models.Entry, error) {
+	if len(prefix) < 6 {
+		return nil, fmt.Errorf("prefix must be at least 6 characters")
+	}
+	query := `
+		SELECT id, feed_id, guid, title, link, author, published_at, content, read, read_at, created_at
+		FROM entries
+		WHERE id LIKE ?
+		LIMIT 1
+	`
+	entry := &models.Entry{}
+	err := db.QueryRow(query, prefix+"%").Scan(
+		&entry.ID,
+		&entry.FeedID,
+		&entry.GUID,
+		&entry.Title,
+		&entry.Link,
+		&entry.Author,
+		&entry.PublishedAt,
+		&entry.Content,
+		&entry.Read,
+		&entry.ReadAt,
+		&entry.CreatedAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get entry by prefix: %w", err)
+	}
+	return entry, nil
+}
+
+// ListEntries retrieves entries with flexible filtering
+// All parameters are optional via pointers:
+// - feedID: filter by specific feed (nil = all feeds)
+// - unreadOnly: filter by read status (nil = all entries)
+// - since: filter by published_at >= since (nil = no time filter)
+// - limit: maximum number of results (nil = no limit)
+func ListEntries(db *sql.DB, feedID *string, unreadOnly *bool, since *time.Time, limit *int) ([]*models.Entry, error) {
+	query := `
+		SELECT id, feed_id, guid, title, link, author, published_at, content, read, read_at, created_at
+		FROM entries
+		WHERE 1=1
+	`
+	args := []interface{}{}
+
+	if feedID != nil {
+		query += " AND feed_id = ?"
+		args = append(args, *feedID)
+	}
+
+	if unreadOnly != nil && *unreadOnly {
+		query += " AND read = FALSE"
+	}
+
+	if since != nil {
+		query += " AND published_at >= ?"
+		args = append(args, *since)
+	}
+
+	query += " ORDER BY published_at DESC"
+
+	if limit != nil {
+		query += " LIMIT ?"
+		args = append(args, *limit)
+	}
+
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list entries: %w", err)
+	}
+	defer rows.Close()
+
+	entries := []*models.Entry{}
+	for rows.Next() {
+		entry := &models.Entry{}
+		err := rows.Scan(
+			&entry.ID,
+			&entry.FeedID,
+			&entry.GUID,
+			&entry.Title,
+			&entry.Link,
+			&entry.Author,
+			&entry.PublishedAt,
+			&entry.Content,
+			&entry.Read,
+			&entry.ReadAt,
+			&entry.CreatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan entry: %w", err)
+		}
+		entries = append(entries, entry)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating entries: %w", err)
+	}
+
+	return entries, nil
+}
+
+// MarkEntryRead marks an entry as read and sets read_at to current time
+func MarkEntryRead(db *sql.DB, id string) error {
+	query := `
+		UPDATE entries
+		SET read = TRUE, read_at = ?
+		WHERE id = ?
+	`
+	now := time.Now()
+	_, err := db.Exec(query, now, id)
+	if err != nil {
+		return fmt.Errorf("failed to mark entry as read: %w", err)
+	}
+	return nil
+}
+
+// MarkEntryUnread marks an entry as unread and clears the read_at timestamp
+func MarkEntryUnread(db *sql.DB, id string) error {
+	query := `
+		UPDATE entries
+		SET read = FALSE, read_at = NULL
+		WHERE id = ?
+	`
+	_, err := db.Exec(query, id)
+	if err != nil {
+		return fmt.Errorf("failed to mark entry as unread: %w", err)
+	}
+	return nil
+}
+
+// EntryExists checks if an entry exists with the given feed_id and guid
+func EntryExists(db *sql.DB, feedID, guid string) (bool, error) {
+	query := `
+		SELECT COUNT(*) FROM entries
+		WHERE feed_id = ? AND guid = ?
+	`
+	var count int
+	err := db.QueryRow(query, feedID, guid).Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("failed to check entry existence: %w", err)
+	}
+	return count > 0, nil
+}
+
+// CountUnreadEntries counts unread entries, optionally filtered by feedID
+// If feedID is nil, counts all unread entries across all feeds
+func CountUnreadEntries(db *sql.DB, feedID *string) (int, error) {
+	query := `
+		SELECT COUNT(*) FROM entries
+		WHERE read = FALSE
+	`
+	args := []interface{}{}
+
+	if feedID != nil {
+		query += " AND feed_id = ?"
+		args = append(args, *feedID)
+	}
+
+	var count int
+	err := db.QueryRow(query, args...).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count unread entries: %w", err)
+	}
+	return count, nil
+}
