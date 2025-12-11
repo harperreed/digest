@@ -116,7 +116,7 @@ func syncFeed(feed *models.Feed, force bool) (newCount int, wasCached bool, err 
 	if err != nil {
 		// Update error state in database
 		if updateErr := db.UpdateFeedError(dbConn, feed.ID, err.Error()); updateErr != nil {
-			return 0, false, fmt.Errorf("fetch failed and error update failed: %w (original: %v)", updateErr, err)
+			return 0, false, fmt.Errorf("fetch failed (%v) and error update failed: %w", err, updateErr)
 		}
 		return 0, false, err
 	}
@@ -131,7 +131,7 @@ func syncFeed(feed *models.Feed, force bool) (newCount int, wasCached bool, err 
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to parse feed: %v", err)
 		if updateErr := db.UpdateFeedError(dbConn, feed.ID, errMsg); updateErr != nil {
-			return 0, false, fmt.Errorf("parse failed and error update failed: %w (original: %v)", updateErr, err)
+			return 0, false, fmt.Errorf("parse failed (%v) and error update failed: %w", err, updateErr)
 		}
 		return 0, false, fmt.Errorf("failed to parse feed: %w", err)
 	}

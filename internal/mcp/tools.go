@@ -572,9 +572,8 @@ func (s *Server) handleMarkRead(_ context.Context, req mcp.CallToolRequest) (*mc
 		return nil, fmt.Errorf("invalid input: %w", err)
 	}
 
-	// Get entry to verify it exists
-	entry, err := db.GetEntryByID(s.db, input.EntryID)
-	if err != nil {
+	// Verify entry exists
+	if _, err := db.GetEntryByID(s.db, input.EntryID); err != nil {
 		return nil, fmt.Errorf("entry not found: %s", input.EntryID)
 	}
 
@@ -584,7 +583,7 @@ func (s *Server) handleMarkRead(_ context.Context, req mcp.CallToolRequest) (*mc
 	}
 
 	// Reload entry to get updated read_at
-	entry, err = db.GetEntryByID(s.db, input.EntryID)
+	entry, err := db.GetEntryByID(s.db, input.EntryID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to reload entry: %w", err)
 	}
@@ -615,9 +614,8 @@ func (s *Server) handleMarkUnread(_ context.Context, req mcp.CallToolRequest) (*
 		return nil, fmt.Errorf("invalid input: %w", err)
 	}
 
-	// Get entry to verify it exists
-	entry, err := db.GetEntryByID(s.db, input.EntryID)
-	if err != nil {
+	// Verify entry exists
+	if _, err := db.GetEntryByID(s.db, input.EntryID); err != nil {
 		return nil, fmt.Errorf("entry not found: %s", input.EntryID)
 	}
 
@@ -627,7 +625,7 @@ func (s *Server) handleMarkUnread(_ context.Context, req mcp.CallToolRequest) (*
 	}
 
 	// Reload entry to get updated state
-	entry, err = db.GetEntryByID(s.db, input.EntryID)
+	entry, err := db.GetEntryByID(s.db, input.EntryID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to reload entry: %w", err)
 	}
@@ -667,7 +665,7 @@ func (s *Server) syncFeed(feed *models.Feed, force bool) (int, bool, error) {
 	if err != nil {
 		// Update error state in database
 		if updateErr := db.UpdateFeedError(s.db, feed.ID, err.Error()); updateErr != nil {
-			return 0, false, fmt.Errorf("fetch failed and error update failed: %w (original: %v)", updateErr, err)
+			return 0, false, fmt.Errorf("fetch failed (%v) and error update failed: %w", err, updateErr)
 		}
 		return 0, false, err
 	}
@@ -682,7 +680,7 @@ func (s *Server) syncFeed(feed *models.Feed, force bool) (int, bool, error) {
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to parse feed: %v", err)
 		if updateErr := db.UpdateFeedError(s.db, feed.ID, errMsg); updateErr != nil {
-			return 0, false, fmt.Errorf("parse failed and error update failed: %w (original: %v)", updateErr, err)
+			return 0, false, fmt.Errorf("parse failed (%v) and error update failed: %w", err, updateErr)
 		}
 		return 0, false, fmt.Errorf("failed to parse feed: %w", err)
 	}

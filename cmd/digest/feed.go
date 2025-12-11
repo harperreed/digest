@@ -5,6 +5,7 @@ package main
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -32,7 +33,7 @@ var feedAddCmd = &cobra.Command{
 
 		// Check if feed already exists
 		existingFeed, err := db.GetFeedByURL(dbConn, url)
-		if err != nil && err != sql.ErrNoRows {
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("failed to check for existing feed: %w", err)
 		}
 		if existingFeed != nil {
@@ -112,7 +113,7 @@ var feedRemoveCmd = &cobra.Command{
 		// Get feed from database
 		feed, err := db.GetFeedByURL(dbConn, url)
 		if err != nil {
-			if err == sql.ErrNoRows {
+			if errors.Is(err, sql.ErrNoRows) {
 				return fmt.Errorf("feed not found: %s", url)
 			}
 			return fmt.Errorf("failed to get feed: %w", err)
