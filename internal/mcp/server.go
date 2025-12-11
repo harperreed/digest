@@ -48,10 +48,7 @@ func (s *Server) ServeStdio() error {
 	return server.ServeStdio(s.mcpServer)
 }
 
-// registerTools registers MCP tools (stub)
-func (s *Server) registerTools() {
-	// Will be implemented in next tasks
-}
+// registerTools is implemented in tools.go
 
 // registerResources registers MCP resources (stub)
 func (s *Server) registerResources() {
