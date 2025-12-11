@@ -5,11 +5,13 @@ package main
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 
 	"github.com/harper/digest/internal/db"
+	"github.com/harper/digest/internal/timeutil"
 )
 
 var listCmd = &cobra.Command{
@@ -20,10 +22,20 @@ var listCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		all, _ := cmd.Flags().GetBool("all")
 		feedFilter, _ := cmd.Flags().GetString("feed")
+		category, _ := cmd.Flags().GetString("category")
 		limit, _ := cmd.Flags().GetInt("limit")
+		today, _ := cmd.Flags().GetBool("today")
+		yesterday, _ := cmd.Flags().GetBool("yesterday")
+		week, _ := cmd.Flags().GetBool("week")
 
-		// Get feedID if --feed is specified
+		// Get feedID if --feed is specified, or feedIDs if --category is specified
 		var feedID *string
+		var feedIDs []string
+
+		if feedFilter != "" && category != "" {
+			return fmt.Errorf("cannot use --feed and --category together")
+		}
+
 		if feedFilter != "" {
 			// Try exact URL match first
 			feed, err := db.GetFeedByURL(dbConn, feedFilter)
@@ -37,11 +49,47 @@ var listCmd = &cobra.Command{
 			feedID = &feed.ID
 		}
 
+		if category != "" {
+			// Get all feeds in this category from OPML
+			categoryFeeds := opmlDoc.FeedsInFolder(category)
+			if len(categoryFeeds) == 0 {
+				return fmt.Errorf("no feeds found in category %q", category)
+			}
+
+			// Get feed IDs from database
+			for _, opmlFeed := range categoryFeeds {
+				dbFeed, err := db.GetFeedByURL(dbConn, opmlFeed.URL)
+				if err != nil {
+					continue // Skip feeds not in database
+				}
+				feedIDs = append(feedIDs, dbFeed.ID)
+			}
+
+			if len(feedIDs) == 0 {
+				return fmt.Errorf("no synced feeds found in category %q", category)
+			}
+		}
+
 		// Set unreadOnly based on --all flag
 		unreadOnly := !all
 
+		// Calculate date filters based on smart view flags
+		var since, until *time.Time
+		if today {
+			s := timeutil.StartOfToday()
+			since = &s
+		} else if yesterday {
+			s := timeutil.StartOfYesterday()
+			u := timeutil.EndOfYesterday()
+			since = &s
+			until = &u
+		} else if week {
+			s := timeutil.StartOfWeek()
+			since = &s
+		}
+
 		// List entries
-		entries, err := db.ListEntries(dbConn, feedID, &unreadOnly, nil, &limit)
+		entries, err := db.ListEntries(dbConn, feedID, feedIDs, &unreadOnly, since, until, &limit)
 		if err != nil {
 			return fmt.Errorf("failed to list entries: %w", err)
 		}
@@ -97,5 +145,12 @@ func init() {
 
 	listCmd.Flags().BoolP("all", "a", false, "show all entries including read")
 	listCmd.Flags().StringP("feed", "f", "", "filter by feed URL or prefix")
+	listCmd.Flags().StringP("category", "c", "", "filter by feed category/folder")
 	listCmd.Flags().IntP("limit", "n", 20, "max entries to show")
+	listCmd.Flags().Bool("today", false, "show only today's entries")
+	listCmd.Flags().Bool("yesterday", false, "show only yesterday's entries")
+	listCmd.Flags().Bool("week", false, "show only this week's entries")
+
+	listCmd.MarkFlagsMutuallyExclusive("today", "yesterday", "week")
+	listCmd.MarkFlagsMutuallyExclusive("feed", "category")
 }

@@ -121,7 +121,7 @@ func (s *Server) registerEntriesUnreadResource() {
 		},
 		func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
 			unreadOnly := true
-			entries, err := db.ListEntries(s.db, nil, &unreadOnly, nil, nil)
+			entries, err := db.ListEntries(s.db, nil, nil, &unreadOnly, nil, nil, nil)
 			if err != nil {
 				return nil, fmt.Errorf("failed to list unread entries: %w", err)
 			}
@@ -203,7 +203,7 @@ func (s *Server) registerEntriesTodayResource() {
 			now := time.Now().UTC()
 			startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 
-			entries, err := db.ListEntries(s.db, nil, nil, &startOfDay, nil)
+			entries, err := db.ListEntries(s.db, nil, nil, nil, &startOfDay, nil, nil)
 			if err != nil {
 				return nil, fmt.Errorf("failed to list today's entries: %w", err)
 			}
@@ -332,14 +332,14 @@ type StatsSummary struct {
 
 // FeedStats contains per-feed statistics.
 type FeedStats struct {
-	FeedID       string     `json:"feed_id"`
-	FeedTitle    string     `json:"feed_title"`
-	FeedURL      string     `json:"feed_url"`
-	EntryCount   int        `json:"entry_count"`
-	UnreadCount  int        `json:"unread_count"`
-	LastFetched  *time.Time `json:"last_fetched,omitempty"`
-	ErrorCount   int        `json:"error_count"`
-	HasErrors    bool       `json:"has_errors"`
+	FeedID      string     `json:"feed_id"`
+	FeedTitle   string     `json:"feed_title"`
+	FeedURL     string     `json:"feed_url"`
+	EntryCount  int        `json:"entry_count"`
+	UnreadCount int        `json:"unread_count"`
+	LastFetched *time.Time `json:"last_fetched,omitempty"`
+	ErrorCount  int        `json:"error_count"`
+	HasErrors   bool       `json:"has_errors"`
 }
 
 // SyncInfo represents information about the last sync.
@@ -357,7 +357,7 @@ func (s *Server) calculateStats() (*StatsData, error) {
 	}
 
 	// Fetch all entries
-	allEntries, err := db.ListEntries(s.db, nil, nil, nil, nil)
+	allEntries, err := db.ListEntries(s.db, nil, nil, nil, nil, nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list entries: %w", err)
 	}
@@ -381,7 +381,7 @@ func (s *Server) calculateStats() (*StatsData, error) {
 
 	for _, feed := range feeds {
 		// Count entries for this feed
-		feedEntries, err := db.ListEntries(s.db, &feed.ID, nil, nil, nil)
+		feedEntries, err := db.ListEntries(s.db, &feed.ID, nil, nil, nil, nil, nil)
 		if err != nil {
 			return nil, fmt.Errorf("failed to list entries for feed %s: %w", feed.ID, err)
 		}

@@ -50,11 +50,11 @@ type bodyXML struct {
 }
 
 type outlineXML struct {
-	Text     string        `xml:"text,attr"`
-	Title    string        `xml:"title,attr,omitempty"`
-	Type     string        `xml:"type,attr,omitempty"`
-	XMLURL   string        `xml:"xmlUrl,attr,omitempty"`
-	Children []outlineXML  `xml:"outline,omitempty"`
+	Text     string       `xml:"text,attr"`
+	Title    string       `xml:"title,attr,omitempty"`
+	Type     string       `xml:"type,attr,omitempty"`
+	XMLURL   string       `xml:"xmlUrl,attr,omitempty"`
+	Children []outlineXML `xml:"outline,omitempty"`
 }
 
 // NewDocument creates a new empty OPML document with the given title
@@ -219,6 +219,68 @@ func (d *Document) AddFeed(url, title, folder string) error {
 	}
 
 	return nil
+}
+
+// MoveFeed moves a feed to a different folder
+// Pass empty string for newFolder to move to root level
+func (d *Document) MoveFeed(url, newFolder string) error {
+	// Find the feed and get its title
+	var feed *Feed
+	for _, f := range d.AllFeeds() {
+		if f.URL == url {
+			feed = &f
+			break
+		}
+	}
+
+	if feed == nil {
+		return fmt.Errorf("feed not found: %s", url)
+	}
+
+	// Remove from current location
+	if err := d.RemoveFeed(url); err != nil {
+		return fmt.Errorf("failed to remove feed: %w", err)
+	}
+
+	// Add to new location (use existing title)
+	d.addFeedInternal(url, feed.Title, newFolder)
+
+	return nil
+}
+
+// addFeedInternal adds a feed without checking for duplicates
+func (d *Document) addFeedInternal(url, title, folder string) {
+	feed := Outline{
+		Text:   title,
+		Title:  title,
+		Type:   "rss",
+		XMLURL: url,
+	}
+
+	if folder == "" {
+		// Add to root
+		d.Outlines = append(d.Outlines, feed)
+	} else {
+		// Find or create folder
+		folderIndex := -1
+		for i, outline := range d.Outlines {
+			if outline.Text == folder && outline.XMLURL == "" {
+				folderIndex = i
+				break
+			}
+		}
+
+		if folderIndex == -1 {
+			// Create folder
+			d.Outlines = append(d.Outlines, Outline{
+				Text:     folder,
+				Children: []Outline{feed},
+			})
+		} else {
+			// Add to existing folder
+			d.Outlines[folderIndex].Children = append(d.Outlines[folderIndex].Children, feed)
+		}
+	}
 }
 
 // RemoveFeed removes a feed from the document by URL

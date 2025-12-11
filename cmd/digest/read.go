@@ -1,67 +1,110 @@
-// ABOUTME: Read and unread commands for managing entry state
-// ABOUTME: Marks entries as read or unread with prefix-based lookup
+// ABOUTME: Read command for viewing article content
+// ABOUTME: Displays full article details with markdown rendering and marks as read
 
 package main
 
 import (
 	"fmt"
+	"strings"
 
+	"github.com/charmbracelet/glamour"
+	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 
+	"github.com/harper/digest/internal/content"
 	"github.com/harper/digest/internal/db"
 )
 
 var readCmd = &cobra.Command{
-	Use:   "read <entry-prefix>",
-	Short: "Mark an entry as read",
-	Long:  "Mark an entry as read by providing its ID prefix (minimum 6 characters)",
+	Use:   "read <entry-id>",
+	Short: "Read an article",
+	Long:  "Display the full content of an article and mark it as read",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// Get entry by prefix
-		entry, err := db.GetEntryByPrefix(dbConn, args[0])
+		entryRef := args[0]
+		noMark, _ := cmd.Flags().GetBool("no-mark")
+
+		// Get entry by ID or prefix
+		entry, err := db.GetEntryByID(dbConn, entryRef)
 		if err != nil {
-			return fmt.Errorf("failed to find entry: %w", err)
+			// Try prefix match
+			entry, err = db.GetEntryByPrefix(dbConn, entryRef)
+			if err != nil {
+				return fmt.Errorf("failed to find entry: %w", err)
+			}
 		}
 
-		// Mark as read
-		if err := db.MarkEntryRead(dbConn, entry.ID); err != nil {
-			return fmt.Errorf("failed to mark entry as read: %w", err)
+		// Get feed for context
+		feed, err := db.GetFeedByID(dbConn, entry.FeedID)
+		if err != nil {
+			return fmt.Errorf("failed to get feed: %w", err)
 		}
 
-		// Print confirmation with title
+		// Color helpers
+		bold := color.New(color.Bold).SprintFunc()
+		faint := color.New(color.Faint).SprintFunc()
+		cyan := color.New(color.FgCyan).SprintFunc()
+
+		// Display article header
+		fmt.Println(strings.Repeat("─", 60))
+
+		// Title
 		title := "Untitled"
 		if entry.Title != nil {
 			title = *entry.Title
 		}
-		fmt.Printf("✓ Marked as read: %s\n", title)
+		fmt.Printf("%s\n\n", bold(title))
 
-		return nil
-	},
-}
+		// Feed
+		feedTitle := feed.URL
+		if feed.Title != nil {
+			feedTitle = *feed.Title
+		}
+		fmt.Printf("%s %s\n", faint("Feed:"), feedTitle)
 
-var unreadCmd = &cobra.Command{
-	Use:   "unread <entry-prefix>",
-	Short: "Mark an entry as unread",
-	Long:  "Mark an entry as unread by providing its ID prefix (minimum 6 characters)",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		// Get entry by prefix
-		entry, err := db.GetEntryByPrefix(dbConn, args[0])
-		if err != nil {
-			return fmt.Errorf("failed to find entry: %w", err)
+		// Author
+		if entry.Author != nil && *entry.Author != "" {
+			fmt.Printf("%s %s\n", faint("Author:"), *entry.Author)
 		}
 
-		// Mark as unread
-		if err := db.MarkEntryUnread(dbConn, entry.ID); err != nil {
-			return fmt.Errorf("failed to mark entry as unread: %w", err)
+		// Published date
+		if entry.PublishedAt != nil {
+			fmt.Printf("%s %s\n", faint("Published:"), entry.PublishedAt.Format("Mon, 02 Jan 2006 15:04 MST"))
 		}
 
-		// Print confirmation with title
-		title := "Untitled"
-		if entry.Title != nil {
-			title = *entry.Title
+		// Link
+		if entry.Link != nil {
+			fmt.Printf("%s %s\n", faint("Link:"), cyan(*entry.Link))
 		}
-		fmt.Printf("  Marked as unread: %s\n", title)
+
+		fmt.Println(strings.Repeat("─", 60))
+
+		// Content
+		if entry.Content != nil && *entry.Content != "" {
+			// Convert HTML to markdown if needed
+			markdown := content.ToMarkdown(*entry.Content)
+
+			// Render with glamour for terminal display
+			rendered, err := glamour.Render(markdown, "dark")
+			if err != nil {
+				// Fall back to plain markdown if rendering fails
+				fmt.Printf("\n%s\n", markdown)
+			} else {
+				fmt.Print(rendered)
+			}
+		} else {
+			fmt.Println("\n(No content available)")
+		}
+
+		fmt.Println()
+
+		// Mark as read unless --no-mark flag is set
+		if !noMark && !entry.Read {
+			if err := db.MarkEntryRead(dbConn, entry.ID); err != nil {
+				return fmt.Errorf("failed to mark entry as read: %w", err)
+			}
+			fmt.Printf("%s\n", faint("Marked as read"))
+		}
 
 		return nil
 	},
@@ -69,5 +112,6 @@ var unreadCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(readCmd)
-	rootCmd.AddCommand(unreadCmd)
+
+	readCmd.Flags().Bool("no-mark", false, "don't mark the article as read")
 }

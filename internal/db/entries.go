@@ -123,10 +123,12 @@ func GetEntryByPrefix(db *sql.DB, prefix string) (*models.Entry, error) {
 // ListEntries retrieves entries with flexible filtering
 // All parameters are optional via pointers:
 // - feedID: filter by specific feed (nil = all feeds)
+// - feedIDs: filter by multiple feeds (nil = ignored, takes precedence over feedID)
 // - unreadOnly: filter by read status (nil = all entries)
 // - since: filter by published_at >= since (nil = no time filter)
+// - until: filter by published_at < until (nil = no upper time bound)
 // - limit: maximum number of results (nil = no limit)
-func ListEntries(db *sql.DB, feedID *string, unreadOnly *bool, since *time.Time, limit *int) ([]*models.Entry, error) {
+func ListEntries(db *sql.DB, feedID *string, feedIDs []string, unreadOnly *bool, since *time.Time, until *time.Time, limit *int) ([]*models.Entry, error) {
 	query := `
 		SELECT id, feed_id, guid, title, link, author, published_at, content, read, read_at, created_at
 		FROM entries
@@ -134,7 +136,15 @@ func ListEntries(db *sql.DB, feedID *string, unreadOnly *bool, since *time.Time,
 	`
 	args := []interface{}{}
 
-	if feedID != nil {
+	// feedIDs takes precedence over feedID
+	if len(feedIDs) > 0 {
+		placeholders := make([]string, len(feedIDs))
+		for i, id := range feedIDs {
+			placeholders[i] = "?"
+			args = append(args, id)
+		}
+		query += " AND feed_id IN (" + strings.Join(placeholders, ",") + ")"
+	} else if feedID != nil {
 		query += " AND feed_id = ?"
 		args = append(args, *feedID)
 	}
@@ -146,6 +156,11 @@ func ListEntries(db *sql.DB, feedID *string, unreadOnly *bool, since *time.Time,
 	if since != nil {
 		query += " AND published_at >= ?"
 		args = append(args, *since)
+	}
+
+	if until != nil {
+		query += " AND published_at < ?"
+		args = append(args, *until)
 	}
 
 	query += " ORDER BY published_at DESC"
@@ -217,6 +232,26 @@ func MarkEntryUnread(db *sql.DB, id string) error {
 		return fmt.Errorf("failed to mark entry as unread: %w", err)
 	}
 	return nil
+}
+
+// MarkEntriesReadBefore marks all unread entries published before the given time as read
+// Returns the number of entries that were marked as read
+func MarkEntriesReadBefore(db *sql.DB, before time.Time) (int64, error) {
+	query := `
+		UPDATE entries
+		SET read = TRUE, read_at = ?
+		WHERE published_at < ? AND read = FALSE
+	`
+	now := time.Now()
+	result, err := db.Exec(query, now, before)
+	if err != nil {
+		return 0, fmt.Errorf("failed to mark entries as read: %w", err)
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get affected rows: %w", err)
+	}
+	return count, nil
 }
 
 // EntryExists checks if an entry exists with the given feed_id and guid

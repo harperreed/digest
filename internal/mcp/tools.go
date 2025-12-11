@@ -10,10 +10,12 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/harper/digest/internal/content"
 	"github.com/harper/digest/internal/db"
 	"github.com/harper/digest/internal/fetch"
 	"github.com/harper/digest/internal/models"
 	"github.com/harper/digest/internal/parse"
+	"github.com/harper/digest/internal/timeutil"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
@@ -78,6 +80,8 @@ type SyncFeedsOutput struct {
 type ListEntriesInput struct {
 	FeedID     *string `json:"feed_id,omitempty"`
 	UnreadOnly *bool   `json:"unread_only,omitempty"`
+	Since      *string `json:"since,omitempty"`
+	Until      *string `json:"until,omitempty"`
 	Limit      *int    `json:"limit,omitempty"`
 }
 
@@ -107,6 +111,34 @@ type MarkUnreadInput struct {
 	EntryID string `json:"entry_id"`
 }
 
+type BulkMarkReadInput struct {
+	Before string `json:"before"`
+}
+
+type BulkMarkReadOutput struct {
+	Count   int64     `json:"count"`
+	Before  time.Time `json:"before"`
+	Message string    `json:"message"`
+}
+
+type GetEntryInput struct {
+	EntryID string `json:"entry_id"`
+}
+
+type GetEntryOutput struct {
+	ID          string     `json:"id"`
+	FeedID      string     `json:"feed_id"`
+	FeedTitle   string     `json:"feed_title,omitempty"`
+	Title       *string    `json:"title,omitempty"`
+	Link        *string    `json:"link,omitempty"`
+	Author      *string    `json:"author,omitempty"`
+	PublishedAt *time.Time `json:"published_at,omitempty"`
+	Content     *string    `json:"content,omitempty"`
+	Read        bool       `json:"read"`
+	ReadAt      *time.Time `json:"read_at,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+}
+
 // Tool registration
 
 func (s *Server) registerTools() {
@@ -115,8 +147,10 @@ func (s *Server) registerTools() {
 	s.registerRemoveFeedTool()
 	s.registerSyncFeedsTool()
 	s.registerListEntriesTool()
+	s.registerGetEntryTool()
 	s.registerMarkReadTool()
 	s.registerMarkUnreadTool()
+	s.registerBulkMarkReadTool()
 }
 
 func (s *Server) registerListFeedsTool() {
@@ -199,7 +233,7 @@ func (s *Server) registerSyncFeedsTool() {
 func (s *Server) registerListEntriesTool() {
 	tool := mcp.Tool{
 		Name:        "list_entries",
-		Description: "Retrieve feed entries with optional filtering. Filter by feed_id to see entries from a specific feed, unread_only to see only unread entries, and limit to control the number of results. All filters are optional and can be combined. Returns entries sorted by published date (newest first).",
+		Description: "Retrieve feed entries with optional filtering. Use 'since' with values like 'today', 'yesterday', 'week', 'month' to get recent entries (e.g., since='today' for today's entries). Filter by feed_id for a specific feed, unread_only for unread entries, and limit to control results. All filters are optional and can be combined. Returns entries sorted by published date (newest first). Use get_entry to read full article content.",
 		InputSchema: mcp.ToolInputSchema{
 			Type: "object",
 			Properties: map[string]interface{}{
@@ -211,6 +245,14 @@ func (s *Server) registerListEntriesTool() {
 					"type":        "boolean",
 					"description": "If true, returns only unread entries. If false or omitted, returns all entries. Example: true",
 				},
+				"since": map[string]interface{}{
+					"type":        "string",
+					"description": "Only return entries published on or after this date. Accepts shortcuts: 'today', 'yesterday', 'week', 'month', or ISO date (YYYY-MM-DD). Example: 'today' for today's entries",
+				},
+				"until": map[string]interface{}{
+					"type":        "string",
+					"description": "Only return entries published before this date. Accepts: 'today', 'yesterday', 'week', 'month', or ISO date (YYYY-MM-DD). Example: 'today' for yesterday and earlier",
+				},
 				"limit": map[string]interface{}{
 					"type":        "integer",
 					"description": "Maximum number of entries to return. If omitted, returns all matching entries. Example: 50",
@@ -219,6 +261,24 @@ func (s *Server) registerListEntriesTool() {
 		},
 	}
 	s.mcpServer.AddTool(tool, s.handleListEntries)
+}
+
+func (s *Server) registerGetEntryTool() {
+	tool := mcp.Tool{
+		Name:        "get_entry",
+		Description: "Get the full details of a single entry including its content. Content is converted from HTML to Markdown for better readability. Use this after list_entries to read the full article. Supports both full entry IDs and ID prefixes (first 8 characters).",
+		InputSchema: mcp.ToolInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"entry_id": map[string]interface{}{
+					"type":        "string",
+					"description": "The entry ID or ID prefix. Example: 'abc12345' (prefix) or 'abc12345-1234-1234-1234-123456789abc' (full)",
+				},
+			},
+			Required: []string{"entry_id"},
+		},
+	}
+	s.mcpServer.AddTool(tool, s.handleGetEntry)
 }
 
 func (s *Server) registerMarkReadTool() {
@@ -255,6 +315,24 @@ func (s *Server) registerMarkUnreadTool() {
 		},
 	}
 	s.mcpServer.AddTool(tool, s.handleMarkUnread)
+}
+
+func (s *Server) registerBulkMarkReadTool() {
+	tool := mcp.Tool{
+		Name:        "bulk_mark_read",
+		Description: "Mark all entries older than a specified period as read. Use this to catch up on older content. Accepts period names (yesterday, week, month) or ISO 8601 dates (YYYY-MM-DD). Returns the count of entries marked as read.",
+		InputSchema: mcp.ToolInputSchema{
+			Type: "object",
+			Properties: map[string]interface{}{
+				"before": map[string]interface{}{
+					"type":        "string",
+					"description": "Mark entries published before this date/period as read. Accepts: 'yesterday', 'week', 'month', or YYYY-MM-DD. Example: 'yesterday' or '2024-01-15'",
+				},
+			},
+			Required: []string{"before"},
+		},
+	}
+	s.mcpServer.AddTool(tool, s.handleBulkMarkRead)
 }
 
 // Handler implementations
@@ -518,8 +596,25 @@ func (s *Server) handleListEntries(_ context.Context, req mcp.CallToolRequest) (
 		return nil, fmt.Errorf("invalid input: %w", err)
 	}
 
+	// Parse since/until date strings
+	var since, until *time.Time
+	if input.Since != nil {
+		t, err := parseDateString(*input.Since)
+		if err != nil {
+			return nil, fmt.Errorf("invalid since value: %w", err)
+		}
+		since = &t
+	}
+	if input.Until != nil {
+		t, err := parseDateString(*input.Until)
+		if err != nil {
+			return nil, fmt.Errorf("invalid until value: %w", err)
+		}
+		until = &t
+	}
+
 	// List entries with filters
-	entries, err := db.ListEntries(s.db, input.FeedID, input.UnreadOnly, nil, input.Limit)
+	entries, err := db.ListEntries(s.db, input.FeedID, nil, input.UnreadOnly, since, until, input.Limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list entries: %w", err)
 	}
@@ -548,6 +643,12 @@ func (s *Server) handleListEntries(_ context.Context, req mcp.CallToolRequest) (
 	if input.UnreadOnly != nil {
 		filters["unread_only"] = *input.UnreadOnly
 	}
+	if since != nil {
+		filters["since"] = *since
+	}
+	if until != nil {
+		filters["until"] = *until
+	}
 	if input.Limit != nil {
 		filters["limit"] = *input.Limit
 	}
@@ -556,6 +657,62 @@ func (s *Server) handleListEntries(_ context.Context, req mcp.CallToolRequest) (
 		Entries: entryOutputs,
 		Count:   len(entryOutputs),
 		Filters: filters,
+	}
+
+	jsonBytes, err := json.MarshalIndent(output, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal output: %w", err)
+	}
+
+	return mcp.NewToolResultText(string(jsonBytes)), nil
+}
+
+func (s *Server) handleGetEntry(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	var input GetEntryInput
+	if err := req.BindArguments(&input); err != nil {
+		return nil, fmt.Errorf("invalid input: %w", err)
+	}
+
+	// Get entry by ID or prefix
+	entry, err := db.GetEntryByID(s.db, input.EntryID)
+	if err != nil {
+		// Try prefix match
+		entry, err = db.GetEntryByPrefix(s.db, input.EntryID)
+		if err != nil {
+			return nil, fmt.Errorf("entry not found: %s", input.EntryID)
+		}
+	}
+
+	// Get feed for context
+	feed, err := db.GetFeedByID(s.db, entry.FeedID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get feed: %w", err)
+	}
+
+	feedTitle := feed.URL
+	if feed.Title != nil {
+		feedTitle = *feed.Title
+	}
+
+	// Convert content to markdown if HTML
+	var contentPtr *string
+	if entry.Content != nil && *entry.Content != "" {
+		markdown := content.ToMarkdown(*entry.Content)
+		contentPtr = &markdown
+	}
+
+	output := GetEntryOutput{
+		ID:          entry.ID,
+		FeedID:      entry.FeedID,
+		FeedTitle:   feedTitle,
+		Title:       entry.Title,
+		Link:        entry.Link,
+		Author:      entry.Author,
+		PublishedAt: entry.PublishedAt,
+		Content:     contentPtr,
+		Read:        entry.Read,
+		ReadAt:      entry.ReadAt,
+		CreatedAt:   entry.CreatedAt,
 	}
 
 	jsonBytes, err := json.MarshalIndent(output, "", "  ")
@@ -733,4 +890,61 @@ func (s *Server) syncFeed(feed *models.Feed, force bool) (int, bool, error) {
 	}
 
 	return newCount, false, nil
+}
+
+func (s *Server) handleBulkMarkRead(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	var input BulkMarkReadInput
+	if err := req.BindArguments(&input); err != nil {
+		return nil, fmt.Errorf("invalid input: %w", err)
+	}
+
+	// Parse the before date
+	cutoff, err := parseDateString(input.Before)
+	if err != nil {
+		return nil, fmt.Errorf("invalid before value: %w", err)
+	}
+
+	// Mark entries as read
+	count, err := db.MarkEntriesReadBefore(s.db, cutoff)
+	if err != nil {
+		return nil, fmt.Errorf("failed to mark entries as read: %w", err)
+	}
+
+	output := BulkMarkReadOutput{
+		Count:  count,
+		Before: cutoff,
+	}
+
+	if count == 0 {
+		output.Message = "No entries to mark as read"
+	} else {
+		output.Message = fmt.Sprintf("Marked %d entries as read", count)
+	}
+
+	jsonBytes, err := json.MarshalIndent(output, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal output: %w", err)
+	}
+
+	return mcp.NewToolResultText(string(jsonBytes)), nil
+}
+
+// parseDateString parses a date string that can be a period name or ISO date.
+func parseDateString(s string) (time.Time, error) {
+	// Try period name first
+	if t, ok := timeutil.ParsePeriod(s); ok {
+		return t, nil
+	}
+
+	// Try ISO date format
+	if t, err := time.Parse("2006-01-02", s); err == nil {
+		return t, nil
+	}
+
+	// Try RFC3339
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t, nil
+	}
+
+	return time.Time{}, fmt.Errorf("cannot parse date: use yesterday, week, month, today, or YYYY-MM-DD format")
 }

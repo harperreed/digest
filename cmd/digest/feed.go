@@ -168,11 +168,49 @@ var feedRemoveCmd = &cobra.Command{
 	},
 }
 
+var feedMoveCmd = &cobra.Command{
+	Use:   "move <url> <category>",
+	Short: "Move a feed to a different category",
+	Long:  "Move a feed to a different category/folder. Use empty quotes \"\" for root level.",
+	Args:  cobra.ExactArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		url := args[0]
+		newFolder := args[1]
+
+		// Verify feed exists in database
+		_, err := db.GetFeedByURL(dbConn, url)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("feed not found: %s", url)
+			}
+			return fmt.Errorf("failed to get feed: %w", err)
+		}
+
+		// Move feed in OPML
+		if err := opmlDoc.MoveFeed(url, newFolder); err != nil {
+			return fmt.Errorf("failed to move feed: %w", err)
+		}
+
+		// Save OPML
+		if err := saveOPML(); err != nil {
+			return fmt.Errorf("failed to save OPML: %w", err)
+		}
+
+		if newFolder == "" {
+			fmt.Printf("Moved feed to root level: %s\n", url)
+		} else {
+			fmt.Printf("Moved feed to '%s': %s\n", newFolder, url)
+		}
+		return nil
+	},
+}
+
 func init() {
 	rootCmd.AddCommand(feedCmd)
 	feedCmd.AddCommand(feedAddCmd)
 	feedCmd.AddCommand(feedListCmd)
 	feedCmd.AddCommand(feedRemoveCmd)
+	feedCmd.AddCommand(feedMoveCmd)
 
 	feedAddCmd.Flags().StringP("folder", "f", "", "folder to organize feed in")
 	feedAddCmd.Flags().StringP("title", "t", "", "feed title (defaults to discovered title)")

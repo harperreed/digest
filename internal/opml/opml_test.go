@@ -312,3 +312,68 @@ func TestOPML_Write(t *testing.T) {
 		t.Error("Output missing feed URL")
 	}
 }
+
+func TestOPML_MoveFeed(t *testing.T) {
+	doc := NewDocument("Move Test")
+
+	// Add feeds to different folders
+	doc.AddFeed("https://example.com/feed1", "Feed 1", "Tech")
+	doc.AddFeed("https://example.com/feed2", "Feed 2", "News")
+	doc.AddFeed("https://example.com/feed3", "Feed 3", "")
+
+	// Verify initial state
+	techFeeds := doc.FeedsInFolder("Tech")
+	if len(techFeeds) != 1 {
+		t.Fatalf("expected 1 feed in Tech, got %d", len(techFeeds))
+	}
+
+	newsFeeds := doc.FeedsInFolder("News")
+	if len(newsFeeds) != 1 {
+		t.Fatalf("expected 1 feed in News, got %d", len(newsFeeds))
+	}
+
+	// Move feed from Tech to News
+	err := doc.MoveFeed("https://example.com/feed1", "News")
+	if err != nil {
+		t.Fatalf("MoveFeed() error = %v", err)
+	}
+
+	// Verify feed moved
+	techFeeds = doc.FeedsInFolder("Tech")
+	if len(techFeeds) != 0 {
+		t.Errorf("expected 0 feeds in Tech after move, got %d", len(techFeeds))
+	}
+
+	newsFeeds = doc.FeedsInFolder("News")
+	if len(newsFeeds) != 2 {
+		t.Errorf("expected 2 feeds in News after move, got %d", len(newsFeeds))
+	}
+
+	// Move feed to root level
+	err = doc.MoveFeed("https://example.com/feed2", "")
+	if err != nil {
+		t.Fatalf("MoveFeed() to root error = %v", err)
+	}
+
+	rootFeeds := doc.FeedsInFolder("")
+	if len(rootFeeds) != 2 {
+		t.Errorf("expected 2 feeds at root level, got %d", len(rootFeeds))
+	}
+
+	// Move feed to new folder (should create it)
+	err = doc.MoveFeed("https://example.com/feed3", "Sports")
+	if err != nil {
+		t.Fatalf("MoveFeed() to new folder error = %v", err)
+	}
+
+	sportsFeeds := doc.FeedsInFolder("Sports")
+	if len(sportsFeeds) != 1 {
+		t.Errorf("expected 1 feed in Sports, got %d", len(sportsFeeds))
+	}
+
+	// Try to move non-existent feed
+	err = doc.MoveFeed("https://example.com/nonexistent", "Tech")
+	if err == nil {
+		t.Error("expected error when moving non-existent feed")
+	}
+}
