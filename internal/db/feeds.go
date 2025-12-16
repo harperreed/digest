@@ -14,9 +14,9 @@ import (
 
 func CreateFeed(db *sql.DB, feed *models.Feed) error {
 	_, err := db.Exec(`
-		INSERT INTO feeds (id, url, title, etag, last_modified, last_fetched_at, last_error, error_count, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		feed.ID, feed.URL, feed.Title, feed.ETag, feed.LastModified,
+		INSERT INTO feeds (id, url, title, folder, etag, last_modified, last_fetched_at, last_error, error_count, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		feed.ID, feed.URL, feed.Title, feed.Folder, feed.ETag, feed.LastModified,
 		feed.LastFetchedAt, feed.LastError, feed.ErrorCount, feed.CreatedAt,
 	)
 	return err
@@ -25,9 +25,9 @@ func CreateFeed(db *sql.DB, feed *models.Feed) error {
 func GetFeedByURL(db *sql.DB, url string) (*models.Feed, error) {
 	feed := &models.Feed{}
 	err := db.QueryRow(`
-		SELECT id, url, title, etag, last_modified, last_fetched_at, last_error, error_count, created_at
+		SELECT id, url, title, folder, etag, last_modified, last_fetched_at, last_error, error_count, created_at
 		FROM feeds WHERE url = ?`, url,
-	).Scan(&feed.ID, &feed.URL, &feed.Title, &feed.ETag, &feed.LastModified,
+	).Scan(&feed.ID, &feed.URL, &feed.Title, &feed.Folder, &feed.ETag, &feed.LastModified,
 		&feed.LastFetchedAt, &feed.LastError, &feed.ErrorCount, &feed.CreatedAt)
 	if err != nil {
 		return nil, err
@@ -45,7 +45,7 @@ func GetFeedByPrefix(db *sql.DB, prefix string) (*models.Feed, error) {
 	escapedPrefix = strings.ReplaceAll(escapedPrefix, "_", "\\_")
 
 	rows, err := db.Query(`
-		SELECT id, url, title, etag, last_modified, last_fetched_at, last_error, error_count, created_at
+		SELECT id, url, title, folder, etag, last_modified, last_fetched_at, last_error, error_count, created_at
 		FROM feeds WHERE id LIKE ? ESCAPE '\'`, escapedPrefix+"%",
 	)
 	if err != nil {
@@ -56,7 +56,7 @@ func GetFeedByPrefix(db *sql.DB, prefix string) (*models.Feed, error) {
 	var feeds []*models.Feed
 	for rows.Next() {
 		feed := &models.Feed{}
-		if err := rows.Scan(&feed.ID, &feed.URL, &feed.Title, &feed.ETag, &feed.LastModified,
+		if err := rows.Scan(&feed.ID, &feed.URL, &feed.Title, &feed.Folder, &feed.ETag, &feed.LastModified,
 			&feed.LastFetchedAt, &feed.LastError, &feed.ErrorCount, &feed.CreatedAt); err != nil {
 			return nil, err
 		}
@@ -79,9 +79,9 @@ func GetFeedByPrefix(db *sql.DB, prefix string) (*models.Feed, error) {
 func GetFeedByID(db *sql.DB, id string) (*models.Feed, error) {
 	feed := &models.Feed{}
 	err := db.QueryRow(`
-		SELECT id, url, title, etag, last_modified, last_fetched_at, last_error, error_count, created_at
+		SELECT id, url, title, folder, etag, last_modified, last_fetched_at, last_error, error_count, created_at
 		FROM feeds WHERE id = ?`, id,
-	).Scan(&feed.ID, &feed.URL, &feed.Title, &feed.ETag, &feed.LastModified,
+	).Scan(&feed.ID, &feed.URL, &feed.Title, &feed.Folder, &feed.ETag, &feed.LastModified,
 		&feed.LastFetchedAt, &feed.LastError, &feed.ErrorCount, &feed.CreatedAt)
 	if err != nil {
 		return nil, err
@@ -91,7 +91,7 @@ func GetFeedByID(db *sql.DB, id string) (*models.Feed, error) {
 
 func ListFeeds(db *sql.DB) ([]*models.Feed, error) {
 	rows, err := db.Query(`
-		SELECT id, url, title, etag, last_modified, last_fetched_at, last_error, error_count, created_at
+		SELECT id, url, title, folder, etag, last_modified, last_fetched_at, last_error, error_count, created_at
 		FROM feeds ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
@@ -101,7 +101,7 @@ func ListFeeds(db *sql.DB) ([]*models.Feed, error) {
 	var feeds []*models.Feed
 	for rows.Next() {
 		feed := &models.Feed{}
-		if err := rows.Scan(&feed.ID, &feed.URL, &feed.Title, &feed.ETag, &feed.LastModified,
+		if err := rows.Scan(&feed.ID, &feed.URL, &feed.Title, &feed.Folder, &feed.ETag, &feed.LastModified,
 			&feed.LastFetchedAt, &feed.LastError, &feed.ErrorCount, &feed.CreatedAt); err != nil {
 			return nil, err
 		}
@@ -118,10 +118,10 @@ func ListFeeds(db *sql.DB) ([]*models.Feed, error) {
 func UpdateFeed(db *sql.DB, feed *models.Feed) error {
 	_, err := db.Exec(`
 		UPDATE feeds SET
-			title = ?, etag = ?, last_modified = ?, last_fetched_at = ?,
+			title = ?, folder = ?, etag = ?, last_modified = ?, last_fetched_at = ?,
 			last_error = ?, error_count = ?
 		WHERE id = ?`,
-		feed.Title, feed.ETag, feed.LastModified, feed.LastFetchedAt,
+		feed.Title, feed.Folder, feed.ETag, feed.LastModified, feed.LastFetchedAt,
 		feed.LastError, feed.ErrorCount, feed.ID,
 	)
 	return err

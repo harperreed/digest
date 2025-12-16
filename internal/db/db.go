@@ -62,6 +62,7 @@ func runMigrations(db *sql.DB) error {
 		id TEXT PRIMARY KEY,
 		url TEXT UNIQUE NOT NULL,
 		title TEXT,
+		folder TEXT DEFAULT '',
 		etag TEXT,
 		last_modified TEXT,
 		last_fetched_at DATETIME,

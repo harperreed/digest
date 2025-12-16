@@ -9,11 +9,9 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/mark3labs/mcp-go v0.43.2
 	github.com/mmcdole/gofeed v1.3.0
-	github.com/oklog/ulid/v2 v2.1.1
 	github.com/spf13/cobra v1.10.1
 	golang.org/x/net v0.48.0
 	modernc.org/sqlite v1.40.1
-	suitesync v0.3.0
 )
 
 require (

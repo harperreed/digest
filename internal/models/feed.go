@@ -14,6 +14,7 @@ type Feed struct {
 	ID            string     // Unique identifier for the feed
 	URL           string     // Feed URL
 	Title         *string    // Feed title (from RSS/Atom metadata)
+	Folder        string     // Folder for organization (empty = root)
 	ETag          *string    // HTTP ETag header for conditional requests
 	LastModified  *string    // HTTP Last-Modified header for conditional requests
 	LastFetchedAt *time.Time // Timestamp of last successful fetch

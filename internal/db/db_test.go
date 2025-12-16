@@ -50,3 +50,31 @@ func TestInitDB(t *testing.T) {
 		t.Error("feeds table not created")
 	}
 }
+
+func TestFeedFolderColumn(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	db, err := InitDB(dbPath)
+	if err != nil {
+		t.Fatalf("InitDB failed: %v", err)
+	}
+	defer db.Close()
+
+	// Create a feed with folder
+	_, err = db.Exec(`INSERT INTO feeds (id, url, folder, created_at) VALUES (?, ?, ?, datetime('now'))`,
+		"test-id", "https://example.com/feed.xml", "Tech")
+	if err != nil {
+		t.Fatalf("failed to insert feed with folder: %v", err)
+	}
+
+	// Read it back
+	var folder string
+	err = db.QueryRow(`SELECT folder FROM feeds WHERE id = ?`, "test-id").Scan(&folder)
+	if err != nil {
+		t.Fatalf("failed to query folder: %v", err)
+	}
+	if folder != "Tech" {
+		t.Errorf("expected folder 'Tech', got '%s'", folder)
+	}
+}
