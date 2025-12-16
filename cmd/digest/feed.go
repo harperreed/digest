@@ -4,15 +4,21 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
+	"time"
 
 	"github.com/spf13/cobra"
+
+	"suitesync/vault"
 
 	"github.com/harper/digest/internal/db"
 	"github.com/harper/digest/internal/discover"
 	"github.com/harper/digest/internal/models"
+	"github.com/harper/digest/internal/sync"
 )
 
 var feedCmd = &cobra.Command{
@@ -94,6 +100,19 @@ var feedAddCmd = &cobra.Command{
 			return fmt.Errorf("failed to save OPML: %w", err)
 		}
 
+		// Queue sync change
+		cfg, _ := sync.LoadConfig()
+		if cfg != nil && cfg.IsConfigured() {
+			syncer, err := sync.NewSyncer(cfg, dbConn)
+			if err == nil {
+				defer syncer.Close()
+				ctx := context.Background()
+				if err := syncer.QueueFeedChange(ctx, feedURL, opmlTitle, folder, time.Now(), vault.OpUpsert); err != nil {
+					log.Printf("warning: failed to queue sync: %v", err)
+				}
+			}
+		}
+
 		if folder != "" {
 			fmt.Printf("Added feed to folder '%s': %s\n", folder, feedTitle)
 		} else {
@@ -148,6 +167,22 @@ var feedRemoveCmd = &cobra.Command{
 			return fmt.Errorf("failed to get feed: %w", err)
 		}
 
+		// Get feed info from OPML before removing
+		var feedTitle string
+		for _, f := range opmlDoc.AllFeeds() {
+			if f.URL == url {
+				feedTitle = f.Title
+				break
+			}
+		}
+		if feedTitle == "" {
+			if feed.Title != nil {
+				feedTitle = *feed.Title
+			} else {
+				feedTitle = url
+			}
+		}
+
 		// Delete from database
 		if err := db.DeleteFeed(dbConn, feed.ID); err != nil {
 			return fmt.Errorf("failed to delete feed from database: %w", err)
@@ -161,6 +196,19 @@ var feedRemoveCmd = &cobra.Command{
 		// Save OPML
 		if err := saveOPML(); err != nil {
 			return fmt.Errorf("failed to save OPML: %w", err)
+		}
+
+		// Queue sync change
+		cfg, _ := sync.LoadConfig()
+		if cfg != nil && cfg.IsConfigured() {
+			syncer, err := sync.NewSyncer(cfg, dbConn)
+			if err == nil {
+				defer syncer.Close()
+				ctx := context.Background()
+				if err := syncer.QueueFeedChange(ctx, url, feedTitle, "", time.Now(), vault.OpDelete); err != nil {
+					log.Printf("warning: failed to queue sync: %v", err)
+				}
+			}
 		}
 
 		fmt.Printf("Removed feed: %s\n", url)
@@ -178,7 +226,7 @@ var feedMoveCmd = &cobra.Command{
 		newFolder := args[1]
 
 		// Verify feed exists in database
-		_, err := db.GetFeedByURL(dbConn, url)
+		feed, err := db.GetFeedByURL(dbConn, url)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return fmt.Errorf("feed not found: %s", url)
@@ -194,6 +242,35 @@ var feedMoveCmd = &cobra.Command{
 		// Save OPML
 		if err := saveOPML(); err != nil {
 			return fmt.Errorf("failed to save OPML: %w", err)
+		}
+
+		// Get feed title for sync
+		var feedTitle string
+		for _, f := range opmlDoc.AllFeeds() {
+			if f.URL == url {
+				feedTitle = f.Title
+				break
+			}
+		}
+		if feedTitle == "" {
+			if feed.Title != nil {
+				feedTitle = *feed.Title
+			} else {
+				feedTitle = url
+			}
+		}
+
+		// Queue sync change
+		cfg, _ := sync.LoadConfig()
+		if cfg != nil && cfg.IsConfigured() {
+			syncer, err := sync.NewSyncer(cfg, dbConn)
+			if err == nil {
+				defer syncer.Close()
+				ctx := context.Background()
+				if err := syncer.QueueFeedChange(ctx, url, feedTitle, newFolder, time.Now(), vault.OpUpsert); err != nil {
+					log.Printf("warning: failed to queue sync: %v", err)
+				}
+			}
 		}
 
 		if newFolder == "" {
