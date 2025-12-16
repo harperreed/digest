@@ -4,14 +4,17 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/harper/digest/internal/db"
+	"github.com/harper/digest/internal/sync"
 	"github.com/harper/digest/internal/timeutil"
 )
 
@@ -51,6 +54,22 @@ var markReadCmd = &cobra.Command{
 
 			if err := db.MarkEntryRead(dbConn, entry.ID); err != nil {
 				return fmt.Errorf("failed to mark entry as read: %w", err)
+			}
+
+			// Queue read state sync if configured
+			ctx := context.Background()
+			cfg, _ := sync.LoadConfig()
+			if cfg != nil && cfg.IsConfigured() {
+				syncer, err := sync.NewSyncer(cfg, dbConn)
+				if err == nil {
+					defer syncer.Close()
+					feedURL := getFeedURLForEntry(entry.FeedID)
+					if feedURL != "" {
+						if err := syncer.QueueReadStateChange(ctx, feedURL, entry.GUID, true, time.Now()); err != nil {
+							log.Printf("warning: failed to queue read state sync: %v", err)
+						}
+					}
+				}
 			}
 
 			title := "Untitled"
@@ -97,4 +116,13 @@ func init() {
 	rootCmd.AddCommand(markReadCmd)
 
 	markReadCmd.Flags().StringP("before", "b", "", "mark entries older than: yesterday, week, month, or YYYY-MM-DD")
+}
+
+// getFeedURLForEntry returns the feed URL for a given feed ID
+func getFeedURLForEntry(feedID string) string {
+	feed, err := db.GetFeedByID(dbConn, feedID)
+	if err != nil || feed == nil {
+		return ""
+	}
+	return feed.URL
 }

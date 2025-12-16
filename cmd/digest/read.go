@@ -4,10 +4,13 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/glamour"
 	"github.com/fatih/color"
@@ -15,6 +18,7 @@ import (
 
 	"github.com/harper/digest/internal/content"
 	"github.com/harper/digest/internal/db"
+	"github.com/harper/digest/internal/sync"
 )
 
 var readCmd = &cobra.Command{
@@ -109,6 +113,21 @@ var readCmd = &cobra.Command{
 			if err := db.MarkEntryRead(dbConn, entry.ID); err != nil {
 				return fmt.Errorf("failed to mark entry as read: %w", err)
 			}
+
+			// Queue read state sync if configured
+			ctx := context.Background()
+			cfg, _ := sync.LoadConfig()
+			if cfg != nil && cfg.IsConfigured() {
+				syncer, err := sync.NewSyncer(cfg, dbConn)
+				if err == nil {
+					defer syncer.Close()
+					feedURL := feed.URL
+					if err := syncer.QueueReadStateChange(ctx, feedURL, entry.GUID, true, time.Now()); err != nil {
+						log.Printf("warning: failed to queue read state sync: %v", err)
+					}
+				}
+			}
+
 			fmt.Printf("%s\n", faint("Marked as read"))
 		}
 
