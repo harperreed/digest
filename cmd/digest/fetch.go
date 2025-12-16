@@ -1,5 +1,5 @@
-// ABOUTME: Sync command to fetch new entries from RSS/Atom feeds with HTTP caching support
-// ABOUTME: Handles batch syncing of all feeds or individual feed sync with colored progress output
+// ABOUTME: Fetch command to retrieve new entries from RSS/Atom feeds with HTTP caching support
+// ABOUTME: Handles batch fetching of all feeds or individual feed fetch with colored progress output
 
 package main
 
@@ -16,8 +16,8 @@ import (
 	"github.com/harper/digest/internal/parse"
 )
 
-var syncCmd = &cobra.Command{
-	Use:   "sync [url]",
+var fetchCmd = &cobra.Command{
+	Use:   "fetch [url]",
 	Short: "Fetch new entries from feeds",
 	Long: `Fetch new entries from all subscribed feeds or a specific feed by URL.
 
@@ -195,6 +195,6 @@ func feedDisplayName(feed *models.Feed) string {
 }
 
 func init() {
-	rootCmd.AddCommand(syncCmd)
-	syncCmd.Flags().BoolP("force", "f", false, "ignore cache headers and force fetch")
+	rootCmd.AddCommand(fetchCmd)
+	fetchCmd.Flags().BoolP("force", "f", false, "ignore cache headers and force fetch")
 }
