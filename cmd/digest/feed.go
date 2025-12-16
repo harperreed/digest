@@ -13,7 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"suitesync/vault"
+	"github.com/harperreed/sweet/vault"
 
 	"github.com/harper/digest/internal/db"
 	"github.com/harper/digest/internal/discover"

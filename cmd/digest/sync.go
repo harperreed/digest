@@ -14,7 +14,7 @@ import (
 	"syscall"
 	"time"
 
-	"suitesync/vault"
+	"github.com/harperreed/sweet/vault"
 
 	"github.com/fatih/color"
 	"github.com/harper/digest/internal/sync"

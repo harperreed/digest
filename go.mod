@@ -7,6 +7,7 @@ require (
 	github.com/charmbracelet/glamour v0.10.0
 	github.com/fatih/color v1.18.0
 	github.com/google/uuid v1.6.0
+	github.com/harperreed/sweet v0.3.1
 	github.com/mark3labs/mcp-go v0.43.2
 	github.com/mmcdole/gofeed v1.3.0
 	github.com/oklog/ulid/v2 v2.1.1
@@ -15,7 +16,6 @@ require (
 	golang.org/x/net v0.48.0
 	golang.org/x/term v0.38.0
 	modernc.org/sqlite v1.40.1
-	suitesync v0.3.0
 )
 
 require (
@@ -72,5 +72,3 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
-
-replace suitesync => github.com/harperreed/sweet v0.3.0
