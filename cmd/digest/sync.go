@@ -391,6 +391,7 @@ After wipe, run 'digest sync now' to re-push local data.`,
 		// Wipe server-side data
 		fmt.Println("\nWiping server data...")
 		client := vault.NewClient(vault.SyncConfig{
+			AppID:     sync.DigestAppID,
 			BaseURL:   cfg.Server,
 			DeviceID:  cfg.DeviceID,
 			AuthToken: cfg.Token,

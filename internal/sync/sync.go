@@ -17,6 +17,10 @@ import (
 )
 
 const (
+	// DigestAppID is the unique application identifier for digest.
+	// This UUID isolates digest's sync data from other apps using the same vault.
+	DigestAppID = "6b79ff00-25c4-4ff9-921e-049b4f579eab"
+
 	EntityFeed      = "feed"
 	EntityReadState = "read_state"
 )
@@ -52,6 +56,7 @@ func NewSyncer(cfg *Config, appDB *sql.DB) (*Syncer, error) {
 	}
 
 	client := vault.NewClient(vault.SyncConfig{
+		AppID:     DigestAppID,
 		BaseURL:   cfg.Server,
 		DeviceID:  cfg.DeviceID,
 		AuthToken: cfg.Token,
