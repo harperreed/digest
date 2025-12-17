@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/harperreed/sweet/vault"
@@ -106,7 +105,7 @@ never sees your data in plaintext.`,
 
 		// Get password
 		fmt.Print("Password: ")
-		passwordBytes, err := term.ReadPassword(syscall.Stdin)
+		passwordBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
 		fmt.Println()
 		if err != nil {
 			return fmt.Errorf("read password: %w", err)
