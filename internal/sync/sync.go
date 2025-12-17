@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/harperreed/sweet/vault"
@@ -27,11 +28,12 @@ const (
 
 // Syncer manages vault sync for digest data.
 type Syncer struct {
-	config *Config
-	store  *vault.Store
-	keys   vault.Keys
-	client *vault.Client
-	appDB  *sql.DB
+	config      *Config
+	store       *vault.Store
+	keys        vault.Keys
+	client      *vault.Client
+	vaultSyncer *vault.Syncer
+	appDB       *sql.DB
 }
 
 // NewSyncer creates a new syncer from config.
@@ -55,19 +57,39 @@ func NewSyncer(cfg *Config, appDB *sql.DB) (*Syncer, error) {
 		return nil, fmt.Errorf("open vault store: %w", err)
 	}
 
+	if err := ensurePendingReadStateTable(appDB); err != nil {
+		return nil, fmt.Errorf("prepare pending read state table: %w", err)
+	}
+
+	var tokenExpires time.Time
+	if cfg.TokenExpires != "" {
+		tokenExpires, _ = time.Parse(time.RFC3339, cfg.TokenExpires)
+	}
+
 	client := vault.NewClient(vault.SyncConfig{
-		AppID:     DigestAppID,
-		BaseURL:   cfg.Server,
-		DeviceID:  cfg.DeviceID,
-		AuthToken: cfg.Token,
+		AppID:        DigestAppID,
+		BaseURL:      cfg.Server,
+		DeviceID:     cfg.DeviceID,
+		AuthToken:    cfg.Token,
+		RefreshToken: cfg.RefreshToken,
+		TokenExpires: tokenExpires,
+		OnTokenRefresh: func(token, refreshToken string, expires time.Time) {
+			cfg.Token = token
+			cfg.RefreshToken = refreshToken
+			cfg.TokenExpires = expires.Format(time.RFC3339)
+			if err := SaveConfig(cfg); err != nil {
+				fmt.Printf("warning: failed to save refreshed token: %v\n", err)
+			}
+		},
 	})
 
 	return &Syncer{
-		config: cfg,
-		store:  store,
-		keys:   keys,
-		client: client,
-		appDB:  appDB,
+		config:      cfg,
+		store:       store,
+		keys:        keys,
+		client:      client,
+		vaultSyncer: vault.NewSyncer(store, client, keys, cfg.UserID),
+		appDB:       appDB,
 	}, nil
 }
 
@@ -111,27 +133,12 @@ func (s *Syncer) QueueReadStateChange(ctx context.Context, feedURL, guid string,
 }
 
 func (s *Syncer) queueChange(ctx context.Context, entity, entityID string, op vault.Op, payload map[string]any) error {
-	change, err := vault.NewChange(entity, entityID, op, payload)
-	if err != nil {
-		return fmt.Errorf("create change: %w", err)
-	}
-	if op == vault.OpDelete {
-		change.Deleted = true
+	if s.vaultSyncer == nil {
+		return errors.New("vault sync not configured")
 	}
 
-	plain, err := json.Marshal(change)
-	if err != nil {
-		return fmt.Errorf("marshal change: %w", err)
-	}
-
-	aad := change.AAD(s.config.UserID, s.config.DeviceID)
-	env, err := vault.Encrypt(s.keys.EncKey, plain, aad)
-	if err != nil {
-		return fmt.Errorf("encrypt change: %w", err)
-	}
-
-	if err := s.store.EnqueueEncryptedChange(ctx, change, s.config.UserID, s.config.DeviceID, env); err != nil {
-		return fmt.Errorf("enqueue change: %w", err)
+	if _, err := s.vaultSyncer.QueueChange(ctx, entity, entityID, op, payload); err != nil {
+		return fmt.Errorf("queue change: %w", err)
 	}
 
 	if s.config.AutoSync && s.canSync() {
@@ -156,7 +163,10 @@ func (s *Syncer) SyncWithEvents(ctx context.Context, events *vault.SyncEvents) e
 		return errors.New("sync not configured - run 'digest sync login' first")
 	}
 
-	return vault.Sync(ctx, s.store, s.client, s.keys, s.config.UserID, s.applyChange, events)
+	if err := vault.Sync(ctx, s.store, s.client, s.keys, s.config.UserID, s.applyChange, events); err != nil {
+		return err
+	}
+	return s.applyPendingReadStates(ctx)
 }
 
 // applyChange applies a remote change to the local database.
@@ -222,39 +232,102 @@ func (s *Syncer) applyReadStateChange(ctx context.Context, c vault.Change) error
 		return fmt.Errorf("unmarshal read_state payload: %w", err)
 	}
 
-	// Find the entry by feed URL and GUID
+	applied, err := s.updateReadState(ctx, payload.FeedURL, payload.GUID, payload.Read, time.Unix(payload.ReadAt, 0))
+	if err != nil {
+		return err
+	}
+	if !applied {
+		return s.savePendingReadState(ctx, payload.FeedURL, payload.GUID, payload.Read, payload.ReadAt)
+	}
+	return nil
+}
+
+func ensurePendingReadStateTable(dbConn *sql.DB) error {
+	_, err := dbConn.Exec(`
+CREATE TABLE IF NOT EXISTS pending_read_states (
+  feed_url TEXT NOT NULL,
+  guid TEXT NOT NULL,
+  read INTEGER NOT NULL,
+  read_at INTEGER NOT NULL,
+  PRIMARY KEY(feed_url, guid)
+)`)
+	return err
+}
+
+func (s *Syncer) savePendingReadState(ctx context.Context, feedURL, guid string, read bool, readAt int64) error {
+	_, err := s.appDB.ExecContext(ctx, `
+INSERT INTO pending_read_states(feed_url, guid, read, read_at)
+VALUES(?,?,?,?)
+ON CONFLICT(feed_url, guid) DO UPDATE SET
+  read = excluded.read,
+  read_at = excluded.read_at
+`, feedURL, guid, boolToInt(read), readAt)
+	return err
+}
+
+func (s *Syncer) applyPendingReadStates(ctx context.Context) error {
+	rows, err := s.appDB.QueryContext(ctx, `SELECT feed_url, guid, read, read_at FROM pending_read_states`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var feedURL, guid string
+		var readInt int
+		var readAt int64
+		if err := rows.Scan(&feedURL, &guid, &readInt, &readAt); err != nil {
+			return err
+		}
+
+		applied, err := s.updateReadState(ctx, feedURL, guid, readInt == 1, time.Unix(readAt, 0))
+		if err != nil {
+			log.Printf("digest: failed to apply pending read state for %s: %v", guid, err)
+			continue
+		}
+		if applied {
+			_, _ = s.appDB.ExecContext(ctx, `DELETE FROM pending_read_states WHERE feed_url = ? AND guid = ?`, feedURL, guid)
+		}
+	}
+	return rows.Err()
+}
+
+func (s *Syncer) updateReadState(ctx context.Context, feedURL, guid string, read bool, readAt time.Time) (bool, error) {
 	var entryID string
 	var currentReadAt sql.NullTime
 	err := s.appDB.QueryRowContext(ctx, `
 		SELECT e.id, e.read_at FROM entries e
 		JOIN feeds f ON e.feed_id = f.id
 		WHERE f.url = ? AND e.guid = ?
-	`, payload.FeedURL, payload.GUID).Scan(&entryID, &currentReadAt)
+	`, feedURL, guid).Scan(&entryID, &currentReadAt)
 
 	if errors.Is(err, sql.ErrNoRows) {
-		// Entry doesn't exist locally, skip
-		return nil
+		return false, nil
 	} else if err != nil {
-		return fmt.Errorf("find entry: %w", err)
+		return false, fmt.Errorf("find entry: %w", err)
 	}
 
-	// Last-writer-wins: only apply if incoming is newer
-	incomingReadAt := time.Unix(payload.ReadAt, 0)
-	if currentReadAt.Valid && currentReadAt.Time.After(incomingReadAt) {
-		return nil // Local is newer, skip
+	if currentReadAt.Valid && currentReadAt.Time.After(readAt) {
+		return true, nil
 	}
 
-	// Apply the change
-	if payload.Read {
+	if read {
 		_, err = s.appDB.ExecContext(ctx, `
 			UPDATE entries SET read = TRUE, read_at = ? WHERE id = ?
-		`, incomingReadAt, entryID)
+		`, readAt, entryID)
 	} else {
 		_, err = s.appDB.ExecContext(ctx, `
 			UPDATE entries SET read = FALSE, read_at = NULL WHERE id = ?
 		`, entryID)
 	}
-	return err
+	return err == nil, err
+}
+
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // PendingCount returns the number of changes waiting to be synced.
