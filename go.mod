@@ -7,7 +7,7 @@ require (
 	github.com/charmbracelet/glamour v0.10.0
 	github.com/fatih/color v1.18.0
 	github.com/google/uuid v1.6.0
-	github.com/harperreed/sweet v0.3.1
+	github.com/harperreed/sweet v0.3.3
 	github.com/mark3labs/mcp-go v0.43.2
 	github.com/mmcdole/gofeed v1.3.0
 	github.com/oklog/ulid/v2 v2.1.1
