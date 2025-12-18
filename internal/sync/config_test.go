@@ -12,12 +12,26 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestConfigDefaults(t *testing.T) {
-	// Use temp dir for test
+// setupTestEnv creates a temp directory and sets HOME and XDG_CONFIG_HOME to it.
+// Returns a cleanup function that should be deferred.
+func setupTestEnv(t *testing.T) func() {
 	tmpDir := t.TempDir()
 	origHome := os.Getenv("HOME")
+	origXDG := os.Getenv("XDG_CONFIG_HOME")
 	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", origHome)
+	os.Setenv("XDG_CONFIG_HOME", filepath.Join(tmpDir, ".config"))
+	return func() {
+		os.Setenv("HOME", origHome)
+		if origXDG == "" {
+			os.Unsetenv("XDG_CONFIG_HOME")
+		} else {
+			os.Setenv("XDG_CONFIG_HOME", origXDG)
+		}
+	}
+}
+
+func TestConfigDefaults(t *testing.T) {
+	defer setupTestEnv(t)()
 
 	cfg, err := LoadConfig()
 	require.NoError(t, err)
@@ -28,10 +42,7 @@ func TestConfigDefaults(t *testing.T) {
 }
 
 func TestConfigSaveLoad(t *testing.T) {
-	tmpDir := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", origHome)
+	defer setupTestEnv(t)()
 
 	cfg := &Config{
 		Server:     "https://api.example.com",
@@ -39,7 +50,6 @@ func TestConfigSaveLoad(t *testing.T) {
 		Token:      "token456",
 		DeviceID:   "device789",
 		DerivedKey: "abcdef",
-		AutoSync:   true,
 	}
 
 	err := SaveConfig(cfg)
@@ -53,7 +63,6 @@ func TestConfigSaveLoad(t *testing.T) {
 	assert.Equal(t, cfg.Token, loaded.Token)
 	assert.Equal(t, cfg.DeviceID, loaded.DeviceID)
 	assert.Equal(t, cfg.DerivedKey, loaded.DerivedKey)
-	assert.Equal(t, cfg.AutoSync, loaded.AutoSync)
 }
 
 func TestIsConfigured(t *testing.T) {
@@ -70,10 +79,7 @@ func TestIsConfigured(t *testing.T) {
 }
 
 func TestConfigEnvOverrides(t *testing.T) {
-	tmpDir := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", origHome)
+	defer setupTestEnv(t)()
 
 	// Save a base config
 	cfg := &Config{
@@ -83,7 +89,6 @@ func TestConfigEnvOverrides(t *testing.T) {
 		DeviceID:   "file-device",
 		DerivedKey: "file-key",
 		VaultDB:    "/file/vault.db",
-		AutoSync:   true,
 	}
 	err := SaveConfig(cfg)
 	require.NoError(t, err)
@@ -94,14 +99,12 @@ func TestConfigEnvOverrides(t *testing.T) {
 	os.Setenv("DIGEST_TOKEN", "env-token")
 	os.Setenv("DIGEST_DEVICE_ID", "env-device")
 	os.Setenv("DIGEST_VAULT_DB", "/env/vault.db")
-	os.Setenv("DIGEST_AUTO_SYNC", "false")
 	defer func() {
 		os.Unsetenv("DIGEST_SERVER")
 		os.Unsetenv("DIGEST_USER_ID")
 		os.Unsetenv("DIGEST_TOKEN")
 		os.Unsetenv("DIGEST_DEVICE_ID")
 		os.Unsetenv("DIGEST_VAULT_DB")
-		os.Unsetenv("DIGEST_AUTO_SYNC")
 	}()
 
 	// Load config and verify env overrides
@@ -113,53 +116,12 @@ func TestConfigEnvOverrides(t *testing.T) {
 	assert.Equal(t, "env-token", loaded.Token)
 	assert.Equal(t, "env-device", loaded.DeviceID)
 	assert.Equal(t, "/env/vault.db", loaded.VaultDB)
-	assert.False(t, loaded.AutoSync)
 	// DerivedKey should come from file (not overridable)
 	assert.Equal(t, "file-key", loaded.DerivedKey)
 }
 
-func TestConfigAutoSyncEnvValues(t *testing.T) {
-	tmpDir := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", origHome)
-
-	tests := []struct {
-		name     string
-		envValue string
-		expected bool
-	}{
-		{"true string", "true", true},
-		{"1 string", "1", true},
-		{"false string", "false", false},
-		{"0 string", "0", false},
-		{"empty string", "", true}, // Should use file default
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Save config with AutoSync true
-			cfg := &Config{AutoSync: true}
-			err := SaveConfig(cfg)
-			require.NoError(t, err)
-
-			if tt.envValue != "" {
-				os.Setenv("DIGEST_AUTO_SYNC", tt.envValue)
-				defer os.Unsetenv("DIGEST_AUTO_SYNC")
-			}
-
-			loaded, err := LoadConfig()
-			require.NoError(t, err)
-			assert.Equal(t, tt.expected, loaded.AutoSync)
-		})
-	}
-}
-
 func TestConfigCorruptedFile(t *testing.T) {
-	tmpDir := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", origHome)
+	defer setupTestEnv(t)()
 
 	// Create corrupted config file
 	err := EnsureConfigDir()
@@ -188,10 +150,7 @@ func TestConfigCorruptedFile(t *testing.T) {
 }
 
 func TestConfigPathIsDirectory(t *testing.T) {
-	tmpDir := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", origHome)
+	defer setupTestEnv(t)()
 
 	// Create config path as a directory instead of file
 	err := os.MkdirAll(ConfigPath(), 0o750)
@@ -204,10 +163,7 @@ func TestConfigPathIsDirectory(t *testing.T) {
 }
 
 func TestInitConfig(t *testing.T) {
-	tmpDir := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", origHome)
+	defer setupTestEnv(t)()
 
 	cfg, err := InitConfig()
 	require.NoError(t, err)
@@ -217,7 +173,6 @@ func TestInitConfig(t *testing.T) {
 	assert.Len(t, cfg.DeviceID, 26) // ULID length
 
 	// Verify defaults
-	assert.True(t, cfg.AutoSync)
 	assert.NotEmpty(t, cfg.VaultDB)
 
 	// Verify it was saved
@@ -227,10 +182,7 @@ func TestInitConfig(t *testing.T) {
 }
 
 func TestConfigExists(t *testing.T) {
-	tmpDir := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", origHome)
+	defer setupTestEnv(t)()
 
 	// Initially should not exist
 	assert.False(t, ConfigExists())
@@ -245,10 +197,7 @@ func TestConfigExists(t *testing.T) {
 }
 
 func TestEnsureConfigDirBackupFile(t *testing.T) {
-	tmpDir := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", origHome)
+	defer setupTestEnv(t)()
 
 	// Create config dir as a file
 	err := os.MkdirAll(filepath.Dir(ConfigDir()), 0o750)
@@ -314,15 +263,29 @@ func TestExpandPath(t *testing.T) {
 }
 
 func TestLoadConfigNoFile(t *testing.T) {
-	tmpDir := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tmpDir)
-	defer os.Setenv("HOME", origHome)
+	defer setupTestEnv(t)()
 
 	// Should return default config if file doesn't exist
 	cfg, err := LoadConfig()
 	require.NoError(t, err)
 	assert.NotNil(t, cfg)
-	assert.True(t, cfg.AutoSync)
 	assert.NotEmpty(t, cfg.VaultDB)
+}
+
+func TestConfigPathRespectsXDGConfigHome(t *testing.T) {
+	tmpDir := t.TempDir()
+	xdgDir := filepath.Join(tmpDir, "custom-config")
+	origXDG := os.Getenv("XDG_CONFIG_HOME")
+	os.Setenv("XDG_CONFIG_HOME", xdgDir)
+	defer func() {
+		if origXDG == "" {
+			os.Unsetenv("XDG_CONFIG_HOME")
+		} else {
+			os.Setenv("XDG_CONFIG_HOME", origXDG)
+		}
+	}()
+
+	expectedPath := filepath.Join(xdgDir, "digest", "sync.json")
+	actualPath := ConfigPath()
+	assert.Equal(t, expectedPath, actualPath)
 }

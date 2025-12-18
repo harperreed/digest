@@ -33,7 +33,6 @@ func TestNewSyncer(t *testing.T) {
 		DerivedKey: phrase,
 		DeviceID:   "test-device",
 		VaultDB:    filepath.Join(tmpDir, "vault.db"),
-		AutoSync:   false,
 	}
 
 	syncer, err := NewSyncer(cfg, appDB)
@@ -222,22 +221,6 @@ func TestMultipleChanges(t *testing.T) {
 	assert.Equal(t, 5, count)
 }
 
-func TestAutoSyncDisabled(t *testing.T) {
-	ctx := context.Background()
-	syncer := setupTestSyncer(t)
-
-	// AutoSync is disabled by default in test setup
-	assert.False(t, syncer.config.AutoSync)
-
-	err := syncer.QueueFeedChange(ctx, "https://example.com/feed.xml", "Test Feed", "", time.Now(), vault.OpUpsert)
-	require.NoError(t, err)
-
-	// Change should be queued but not synced
-	count, err := syncer.PendingCount(ctx)
-	require.NoError(t, err)
-	assert.Equal(t, 1, count)
-}
-
 func TestSyncNotConfigured(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := t.TempDir()
@@ -339,7 +322,7 @@ func TestCanSync(t *testing.T) {
 			require.NoError(t, err)
 			defer func() { _ = syncer.Close() }()
 
-			assert.Equal(t, tt.expected, syncer.canSync())
+			assert.Equal(t, tt.expected, syncer.vaultSyncer.CanSync())
 		})
 	}
 }

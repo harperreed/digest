@@ -167,7 +167,23 @@ never sees your data in plaintext.`,
 		fmt.Printf("  User ID: %s\n", cfg.UserID)
 		fmt.Printf("  Device: %s\n", cfg.DeviceID[:8]+"...")
 		fmt.Printf("  Token expires: %s\n", result.Token.Expires.Format(time.RFC3339))
-		fmt.Printf("\nRun 'digest sync now' to sync your data.\n")
+
+		// Immediately sync to pull existing data
+		fmt.Println("\nSyncing existing data...")
+		syncer, err := sync.NewSyncer(cfg, dbConn)
+		if err != nil {
+			fmt.Printf("Warning: failed to create syncer: %v\n", err)
+			return nil
+		}
+		defer func() { _ = syncer.Close() }()
+
+		ctx := context.Background()
+		if err := syncer.Sync(ctx); err != nil {
+			fmt.Printf("Warning: initial sync failed: %v\n", err)
+			fmt.Println("You can run 'digest sync now' to retry.")
+		} else {
+			color.Green("✓ Sync complete")
+		}
 
 		return nil
 	},
@@ -188,7 +204,6 @@ var syncStatusCmd = &cobra.Command{
 		fmt.Printf("User ID:   %s\n", valueOrNone(cfg.UserID))
 		fmt.Printf("Device ID: %s\n", valueOrNone(cfg.DeviceID))
 		fmt.Printf("Vault DB:  %s\n", valueOrNone(cfg.VaultDB))
-		fmt.Printf("Auto-sync: %v\n", cfg.AutoSync)
 
 		if cfg.DerivedKey != "" {
 			fmt.Println("Keys:      " + color.GreenString("✓ configured"))
