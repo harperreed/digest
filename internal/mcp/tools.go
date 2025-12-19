@@ -10,8 +10,8 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/harper/digest/internal/charm"
 	"github.com/harper/digest/internal/content"
-	"github.com/harper/digest/internal/db"
 	"github.com/harper/digest/internal/fetch"
 	"github.com/harper/digest/internal/models"
 	"github.com/harper/digest/internal/parse"
@@ -383,19 +383,19 @@ func (s *Server) handleListFeeds(_ context.Context, req mcp.CallToolRequest) (*m
 	opmlFeeds := s.opmlDoc.AllFeeds()
 	folders := s.opmlDoc.Folders()
 
-	// Get all feeds from database
-	dbFeeds, err := db.ListFeeds(s.db)
+	// Get all feeds from charm KV
+	kvFeeds, err := s.client.ListFeeds()
 	if err != nil {
-		return nil, fmt.Errorf("failed to list feeds from database: %w", err)
+		return nil, fmt.Errorf("failed to list feeds: %w", err)
 	}
 
 	// Create map for quick lookup
-	dbFeedMap := make(map[string]*models.Feed)
-	for _, feed := range dbFeeds {
-		dbFeedMap[feed.URL] = feed
+	kvFeedMap := make(map[string]*models.Feed)
+	for _, feed := range kvFeeds {
+		kvFeedMap[feed.URL] = feed
 	}
 
-	// Build output by combining OPML and DB data
+	// Build output by combining OPML and KV data
 	feedOutputs := make([]FeedOutput, 0, len(opmlFeeds))
 	for _, opmlFeed := range opmlFeeds {
 		output := FeedOutput{
@@ -403,16 +403,16 @@ func (s *Server) handleListFeeds(_ context.Context, req mcp.CallToolRequest) (*m
 			Folder: opmlFeed.Folder,
 		}
 
-		// Add database info if available
-		if dbFeed, exists := dbFeedMap[opmlFeed.URL]; exists {
-			output.ID = dbFeed.ID
-			output.Title = dbFeed.Title
-			output.LastFetchedAt = dbFeed.LastFetchedAt
-			output.LastError = dbFeed.LastError
-			output.ErrorCount = dbFeed.ErrorCount
-			output.CreatedAt = dbFeed.CreatedAt
+		// Add KV info if available
+		if kvFeed, exists := kvFeedMap[opmlFeed.URL]; exists {
+			output.ID = kvFeed.ID
+			output.Title = kvFeed.Title
+			output.LastFetchedAt = kvFeed.LastFetchedAt
+			output.LastError = kvFeed.LastError
+			output.ErrorCount = kvFeed.ErrorCount
+			output.CreatedAt = kvFeed.CreatedAt
 		} else {
-			// Feed in OPML but not in DB
+			// Feed in OPML but not in KV
 			title := opmlFeed.Title
 			output.Title = &title
 		}
@@ -452,20 +452,20 @@ func (s *Server) handleAddFeed(_ context.Context, req mcp.CallToolRequest) (*mcp
 		return nil, fmt.Errorf("feed URL must have a host")
 	}
 
-	// Check if feed already exists in database
-	existingFeed, err := db.GetFeedByURL(s.db, input.URL)
+	// Check if feed already exists
+	existingFeed, err := s.client.GetFeedByURL(input.URL)
 	if err == nil && existingFeed != nil {
 		return nil, fmt.Errorf("feed already exists: %s", input.URL)
 	}
 
-	// Create feed in database
-	feed := models.NewFeed(input.URL)
+	// Create feed in charm KV
+	feed := charm.NewFeed(input.URL)
 	if input.Title != nil {
 		feed.Title = input.Title
 	}
 
-	if err := db.CreateFeed(s.db, feed); err != nil {
-		return nil, fmt.Errorf("failed to create feed in database: %w", err)
+	if err := s.client.CreateFeed(feed); err != nil {
+		return nil, fmt.Errorf("failed to create feed: %w", err)
 	}
 
 	// Add to OPML
@@ -510,15 +510,15 @@ func (s *Server) handleRemoveFeed(_ context.Context, req mcp.CallToolRequest) (*
 		return nil, fmt.Errorf("invalid input: %w", err)
 	}
 
-	// Get feed from database to get ID
-	feed, err := db.GetFeedByURL(s.db, input.URL)
+	// Get feed to get ID
+	feed, err := s.client.GetFeedByURL(input.URL)
 	if err != nil {
 		return nil, fmt.Errorf("feed not found: %s", input.URL)
 	}
 
-	// Delete from database (CASCADE will delete entries)
-	if err := db.DeleteFeed(s.db, feed.ID); err != nil {
-		return nil, fmt.Errorf("failed to delete feed from database: %w", err)
+	// Delete from charm KV (cascade deletes entries)
+	if err := s.client.DeleteFeed(feed.ID); err != nil {
+		return nil, fmt.Errorf("failed to delete feed: %w", err)
 	}
 
 	// Remove from OPML
@@ -563,8 +563,8 @@ func (s *Server) handleMoveFeed(_ context.Context, req mcp.CallToolRequest) (*mc
 		return nil, fmt.Errorf("feed URL must have a host")
 	}
 
-	// Verify feed exists in database (consistent with handleRemoveFeed)
-	if _, err := db.GetFeedByURL(s.db, input.URL); err != nil {
+	// Verify feed exists
+	if _, err := s.client.GetFeedByURL(input.URL); err != nil {
 		return nil, fmt.Errorf("feed not found: %s", input.URL)
 	}
 
@@ -636,7 +636,7 @@ func (s *Server) handleSyncFeeds(_ context.Context, req mcp.CallToolRequest) (*m
 	}
 
 	// Get feeds to sync
-	feeds, err := db.ListFeeds(s.db)
+	feeds, err := s.client.ListFeeds()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list feeds: %w", err)
 	}
@@ -739,8 +739,17 @@ func (s *Server) handleListEntries(_ context.Context, req mcp.CallToolRequest) (
 		return nil, fmt.Errorf("limit must be non-negative, got %d", *input.Limit)
 	}
 
-	// List entries with filters
-	entries, err := db.ListEntries(s.db, input.FeedID, nil, input.UnreadOnly, since, until, input.Limit, input.Offset)
+	// Build filter and list entries
+	filter := &charm.EntryFilter{
+		FeedID:     input.FeedID,
+		UnreadOnly: input.UnreadOnly,
+		Since:      since,
+		Until:      until,
+		Limit:      input.Limit,
+		Offset:     input.Offset,
+	}
+
+	entries, err := s.client.ListEntries(filter)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list entries: %w", err)
 	}
@@ -803,17 +812,17 @@ func (s *Server) handleGetEntry(_ context.Context, req mcp.CallToolRequest) (*mc
 	}
 
 	// Get entry by ID or prefix
-	entry, err := db.GetEntryByID(s.db, input.EntryID)
+	entry, err := s.client.GetEntry(input.EntryID)
 	if err != nil {
 		// Try prefix match
-		entry, err = db.GetEntryByPrefix(s.db, input.EntryID)
+		entry, err = s.client.GetEntryByPrefix(input.EntryID)
 		if err != nil {
 			return nil, fmt.Errorf("entry not found: %s", input.EntryID)
 		}
 	}
 
 	// Get feed for context
-	feed, err := db.GetFeedByID(s.db, entry.FeedID)
+	feed, err := s.client.GetFeed(entry.FeedID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get feed: %w", err)
 	}
@@ -859,17 +868,17 @@ func (s *Server) handleMarkRead(_ context.Context, req mcp.CallToolRequest) (*mc
 	}
 
 	// Verify entry exists
-	if _, err := db.GetEntryByID(s.db, input.EntryID); err != nil {
+	if _, err := s.client.GetEntry(input.EntryID); err != nil {
 		return nil, fmt.Errorf("entry not found: %s", input.EntryID)
 	}
 
 	// Mark as read
-	if err := db.MarkEntryRead(s.db, input.EntryID); err != nil {
+	if err := s.client.MarkEntryRead(input.EntryID); err != nil {
 		return nil, fmt.Errorf("failed to mark entry as read: %w", err)
 	}
 
 	// Reload entry to get updated read_at
-	entry, err := db.GetEntryByID(s.db, input.EntryID)
+	entry, err := s.client.GetEntry(input.EntryID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to reload entry: %w", err)
 	}
@@ -901,17 +910,17 @@ func (s *Server) handleMarkUnread(_ context.Context, req mcp.CallToolRequest) (*
 	}
 
 	// Verify entry exists
-	if _, err := db.GetEntryByID(s.db, input.EntryID); err != nil {
+	if _, err := s.client.GetEntry(input.EntryID); err != nil {
 		return nil, fmt.Errorf("entry not found: %s", input.EntryID)
 	}
 
 	// Mark as unread
-	if err := db.MarkEntryUnread(s.db, input.EntryID); err != nil {
+	if err := s.client.MarkEntryUnread(input.EntryID); err != nil {
 		return nil, fmt.Errorf("failed to mark entry as unread: %w", err)
 	}
 
 	// Reload entry to get updated state
-	entry, err := db.GetEntryByID(s.db, input.EntryID)
+	entry, err := s.client.GetEntry(input.EntryID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to reload entry: %w", err)
 	}
@@ -949,8 +958,8 @@ func (s *Server) syncFeed(feed *models.Feed, force bool) (int, bool, error) {
 	// Fetch the feed
 	result, err := fetch.Fetch(feed.URL, etag, lastModified)
 	if err != nil {
-		// Update error state in database
-		if updateErr := db.UpdateFeedError(s.db, feed.ID, err.Error()); updateErr != nil {
+		// Update error state
+		if updateErr := s.client.UpdateFeedError(feed.ID, err.Error()); updateErr != nil {
 			return 0, false, fmt.Errorf("fetch failed (%v) and error update failed: %w", err, updateErr)
 		}
 		return 0, false, err
@@ -965,13 +974,13 @@ func (s *Server) syncFeed(feed *models.Feed, force bool) (int, bool, error) {
 	parsed, err := parse.Parse(result.Body)
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to parse feed: %v", err)
-		if updateErr := db.UpdateFeedError(s.db, feed.ID, errMsg); updateErr != nil {
+		if updateErr := s.client.UpdateFeedError(feed.ID, errMsg); updateErr != nil {
 			return 0, false, fmt.Errorf("parse failed (%v) and error update failed: %w", err, updateErr)
 		}
 		return 0, false, fmt.Errorf("failed to parse feed: %w", err)
 	}
 
-	// Update feed title if empty and persist to database
+	// Update feed title if empty and persist
 	titleUpdated := false
 	if feed.Title == nil || *feed.Title == "" {
 		feed.Title = &parsed.Title
@@ -982,7 +991,7 @@ func (s *Server) syncFeed(feed *models.Feed, force bool) (int, bool, error) {
 	newCount := 0
 	for _, parsedEntry := range parsed.Entries {
 		// Check if entry already exists
-		exists, err := db.EntryExists(s.db, feed.ID, parsedEntry.GUID)
+		exists, err := s.client.EntryExists(feed.ID, parsedEntry.GUID)
 		if err != nil {
 			return newCount, false, fmt.Errorf("failed to check entry existence: %w", err)
 		}
@@ -992,13 +1001,13 @@ func (s *Server) syncFeed(feed *models.Feed, force bool) (int, bool, error) {
 		}
 
 		// Create new entry
-		entry := models.NewEntry(feed.ID, parsedEntry.GUID, parsedEntry.Title)
+		entry := charm.NewEntry(feed.ID, parsedEntry.GUID, parsedEntry.Title)
 		entry.Link = &parsedEntry.Link
 		entry.Author = &parsedEntry.Author
 		entry.PublishedAt = parsedEntry.PublishedAt
 		entry.Content = &parsedEntry.Content
 
-		if err := db.CreateEntry(s.db, entry); err != nil {
+		if err := s.client.CreateEntry(entry); err != nil {
 			return newCount, false, fmt.Errorf("failed to create entry: %w", err)
 		}
 
@@ -1007,13 +1016,13 @@ func (s *Server) syncFeed(feed *models.Feed, force bool) (int, bool, error) {
 
 	// Update feed fetch state
 	fetchedAt := time.Now()
-	if err := db.UpdateFeedFetchState(s.db, feed.ID, &result.ETag, &result.LastModified, fetchedAt); err != nil {
+	if err := s.client.UpdateFeedFetchState(feed.ID, &result.ETag, &result.LastModified, fetchedAt); err != nil {
 		return newCount, false, fmt.Errorf("failed to update feed state: %w", err)
 	}
 
-	// If title was updated, persist to database
+	// If title was updated, persist
 	if titleUpdated {
-		if err := db.UpdateFeed(s.db, feed); err != nil {
+		if err := s.client.UpdateFeed(feed); err != nil {
 			return newCount, false, fmt.Errorf("failed to update feed title: %w", err)
 		}
 	}
@@ -1034,7 +1043,7 @@ func (s *Server) handleBulkMarkRead(_ context.Context, req mcp.CallToolRequest) 
 	}
 
 	// Mark entries as read
-	count, err := db.MarkEntriesReadBefore(s.db, cutoff)
+	count, err := s.client.MarkEntriesReadBefore(cutoff)
 	if err != nil {
 		return nil, fmt.Errorf("failed to mark entries as read: %w", err)
 	}

@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/harper/digest/internal/db"
+	"github.com/harper/digest/internal/charm"
 	"github.com/harper/digest/internal/timeutil"
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -50,7 +50,7 @@ func (s *Server) registerFeedsResource() {
 			MIMEType:    "application/json",
 		},
 		func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-			feeds, err := db.ListFeeds(s.db)
+			feeds, err := s.client.ListFeeds()
 			if err != nil {
 				return nil, fmt.Errorf("failed to list feeds: %w", err)
 			}
@@ -122,7 +122,8 @@ func (s *Server) registerEntriesUnreadResource() {
 		},
 		func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
 			unreadOnly := true
-			entries, err := db.ListEntries(s.db, nil, nil, &unreadOnly, nil, nil, nil, nil)
+			filter := &charm.EntryFilter{UnreadOnly: &unreadOnly}
+			entries, err := s.client.ListEntries(filter)
 			if err != nil {
 				return nil, fmt.Errorf("failed to list unread entries: %w", err)
 			}
@@ -203,7 +204,8 @@ func (s *Server) registerEntriesTodayResource() {
 			// Calculate start of today (midnight local time) - consistent with CLI and timeutil
 			startOfDay := timeutil.StartOfToday()
 
-			entries, err := db.ListEntries(s.db, nil, nil, nil, &startOfDay, nil, nil, nil)
+			filter := &charm.EntryFilter{Since: &startOfDay}
+			entries, err := s.client.ListEntries(filter)
 			if err != nil {
 				return nil, fmt.Errorf("failed to list today's entries: %w", err)
 			}
@@ -350,8 +352,8 @@ type SyncInfo struct {
 }
 
 func (s *Server) calculateStats() (*StatsData, error) {
-	// Get overall stats in a single query
-	overallStats, err := db.GetOverallStats(s.db)
+	// Get overall stats
+	overallStats, err := s.client.GetOverallStats()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get overall stats: %w", err)
 	}
@@ -362,8 +364,8 @@ func (s *Server) calculateStats() (*StatsData, error) {
 		UnreadCount:  overallStats.UnreadCount,
 	}
 
-	// Get per-feed stats with a single JOIN query
-	feedStats, err := db.GetFeedStats(s.db)
+	// Get per-feed stats
+	feedStats, err := s.client.GetFeedStats()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get feed stats: %w", err)
 	}

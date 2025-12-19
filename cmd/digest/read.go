@@ -4,21 +4,14 @@
 package main
 
 import (
-	"context"
-	"database/sql"
-	"errors"
 	"fmt"
-	"log"
 	"strings"
-	"time"
 
 	"github.com/charmbracelet/glamour"
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 
 	"github.com/harper/digest/internal/content"
-	"github.com/harper/digest/internal/db"
-	"github.com/harper/digest/internal/sync"
 )
 
 var readCmd = &cobra.Command{
@@ -31,20 +24,17 @@ var readCmd = &cobra.Command{
 		noMark, _ := cmd.Flags().GetBool("no-mark")
 
 		// Get entry by ID or prefix
-		entry, err := db.GetEntryByID(dbConn, entryRef)
+		entry, err := charmClient.GetEntry(entryRef)
 		if err != nil {
-			// Only try prefix match if entry was not found (not for other DB errors)
-			if !errors.Is(err, sql.ErrNoRows) {
-				return fmt.Errorf("failed to get entry: %w", err)
-			}
-			entry, err = db.GetEntryByPrefix(dbConn, entryRef)
+			// Try prefix match
+			entry, err = charmClient.GetEntryByPrefix(entryRef)
 			if err != nil {
 				return fmt.Errorf("entry not found: %s", entryRef)
 			}
 		}
 
 		// Get feed for context
-		feed, err := db.GetFeedByID(dbConn, entry.FeedID)
+		feed, err := charmClient.GetFeed(entry.FeedID)
 		if err != nil {
 			return fmt.Errorf("failed to get feed: %w", err)
 		}
@@ -110,24 +100,9 @@ var readCmd = &cobra.Command{
 
 		// Mark as read unless --no-mark flag is set
 		if !noMark && !entry.Read {
-			if err := db.MarkEntryRead(dbConn, entry.ID); err != nil {
+			if err := charmClient.MarkEntryRead(entry.ID); err != nil {
 				return fmt.Errorf("failed to mark entry as read: %w", err)
 			}
-
-			// Queue read state sync if configured
-			ctx := context.Background()
-			cfg, _ := sync.LoadConfig()
-			if cfg != nil && cfg.IsConfigured() {
-				syncer, err := sync.NewSyncer(cfg, dbConn)
-				if err == nil {
-					defer syncer.Close()
-					feedURL := feed.URL
-					if err := syncer.QueueReadStateChange(ctx, feedURL, entry.GUID, true, time.Now()); err != nil {
-						log.Printf("warning: failed to queue read state sync: %v", err)
-					}
-				}
-			}
-
 			fmt.Printf("%s\n", faint("Marked as read"))
 		}
 

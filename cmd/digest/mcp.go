@@ -21,8 +21,8 @@ query entries, manage subscriptions, and more through structured tools.
 
 The server communicates via JSON-RPC on stdin/stdout.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// Create MCP server with database and OPML context
-		server := mcp.NewServer(dbConn, opmlDoc, opmlPath)
+		// Create MCP server with charm client and OPML context
+		server := mcp.NewServer(charmClient, opmlDoc, opmlPath)
 
 		// Start serving on stdio
 		if err := server.ServeStdio(); err != nil {

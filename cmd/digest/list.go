@@ -5,12 +5,11 @@ package main
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 
-	"github.com/harper/digest/internal/db"
+	"github.com/harper/digest/internal/charm"
 	"github.com/harper/digest/internal/timeutil"
 )
 
@@ -29,9 +28,17 @@ var listCmd = &cobra.Command{
 		yesterday, _ := cmd.Flags().GetBool("yesterday")
 		week, _ := cmd.Flags().GetBool("week")
 
-		// Get feedID if --feed is specified, or feedIDs if --category is specified
-		var feedID *string
-		var feedIDs []string
+		// Build entry filter
+		filter := &charm.EntryFilter{
+			Limit:  &limit,
+			Offset: &offset,
+		}
+
+		// Set unreadOnly based on --all flag
+		if !all {
+			unreadOnly := true
+			filter.UnreadOnly = &unreadOnly
+		}
 
 		if feedFilter != "" && category != "" {
 			return fmt.Errorf("cannot use --feed and --category together")
@@ -39,15 +46,15 @@ var listCmd = &cobra.Command{
 
 		if feedFilter != "" {
 			// Try exact URL match first
-			feed, err := db.GetFeedByURL(dbConn, feedFilter)
+			feed, err := charmClient.GetFeedByURL(feedFilter)
 			if err != nil {
 				// Try prefix match
-				feed, err = db.GetFeedByPrefix(dbConn, feedFilter)
+				feed, err = charmClient.GetFeedByPrefix(feedFilter)
 				if err != nil {
 					return fmt.Errorf("failed to find feed: %w", err)
 				}
 			}
-			feedID = &feed.ID
+			filter.FeedID = &feed.ID
 		}
 
 		if category != "" {
@@ -57,40 +64,36 @@ var listCmd = &cobra.Command{
 				return fmt.Errorf("no feeds found in category %q", category)
 			}
 
-			// Get feed IDs from database
+			// Get feed IDs from Charm
 			for _, opmlFeed := range categoryFeeds {
-				dbFeed, err := db.GetFeedByURL(dbConn, opmlFeed.URL)
+				charmFeed, err := charmClient.GetFeedByURL(opmlFeed.URL)
 				if err != nil {
-					continue // Skip feeds not in database
+					continue // Skip feeds not in Charm
 				}
-				feedIDs = append(feedIDs, dbFeed.ID)
+				filter.FeedIDs = append(filter.FeedIDs, charmFeed.ID)
 			}
 
-			if len(feedIDs) == 0 {
+			if len(filter.FeedIDs) == 0 {
 				return fmt.Errorf("no synced feeds found in category %q", category)
 			}
 		}
 
-		// Set unreadOnly based on --all flag
-		unreadOnly := !all
-
 		// Calculate date filters based on smart view flags
-		var since, until *time.Time
 		if today {
 			s := timeutil.StartOfToday()
-			since = &s
+			filter.Since = &s
 		} else if yesterday {
 			s := timeutil.StartOfYesterday()
 			u := timeutil.EndOfYesterday()
-			since = &s
-			until = &u
+			filter.Since = &s
+			filter.Until = &u
 		} else if week {
 			s := timeutil.StartOfWeek()
-			since = &s
+			filter.Since = &s
 		}
 
 		// List entries
-		entries, err := db.ListEntries(dbConn, feedID, feedIDs, &unreadOnly, since, until, &limit, &offset)
+		entries, err := charmClient.ListEntries(filter)
 		if err != nil {
 			return fmt.Errorf("failed to list entries: %w", err)
 		}

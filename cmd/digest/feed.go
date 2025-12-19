@@ -1,24 +1,15 @@
 // ABOUTME: Feed management commands for adding, listing, and removing RSS/Atom feeds
-// ABOUTME: Handles feed CRUD operations and syncs changes to both database and OPML file
+// ABOUTME: Handles feed CRUD operations and syncs changes to both Charm KV and OPML file
 
 package main
 
 import (
-	"context"
-	"database/sql"
-	"errors"
 	"fmt"
-	"log"
-	"time"
 
 	"github.com/spf13/cobra"
 
-	"github.com/harperreed/sweet/vault"
-
-	"github.com/harper/digest/internal/db"
+	"github.com/harper/digest/internal/charm"
 	"github.com/harper/digest/internal/discover"
-	"github.com/harper/digest/internal/models"
-	"github.com/harper/digest/internal/sync"
 )
 
 var feedCmd = &cobra.Command{
@@ -31,7 +22,7 @@ var feedCmd = &cobra.Command{
 var feedAddCmd = &cobra.Command{
 	Use:   "add <url>",
 	Short: "Add a new RSS/Atom feed",
-	Long:  "Add a new feed to your subscriptions and sync to OPML. Automatically discovers feed URLs from HTML pages.",
+	Long:  "Add a new feed to your subscriptions. Automatically discovers feed URLs from HTML pages.",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		inputURL := args[0]
@@ -67,49 +58,34 @@ var feedAddCmd = &cobra.Command{
 		}
 
 		// Check if feed already exists
-		existingFeed, err := db.GetFeedByURL(dbConn, feedURL)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("failed to check for existing feed: %w", err)
-		}
-		if existingFeed != nil {
+		existingFeed, err := charmClient.GetFeedByURL(feedURL)
+		if err == nil && existingFeed != nil {
 			return fmt.Errorf("feed already exists: %s", feedURL)
 		}
 
 		// Create new feed
-		feed := models.NewFeed(feedURL)
+		feed := charm.NewFeed(feedURL)
+		feed.Folder = folder
 		if feedTitle != "" {
 			feed.Title = &feedTitle
 		}
 
-		// Save to database
-		if err := db.CreateFeed(dbConn, feed); err != nil {
-			return fmt.Errorf("failed to create feed in database: %w", err)
+		// Save to Charm KV (auto-syncs to cloud)
+		if err := charmClient.CreateFeed(feed); err != nil {
+			return fmt.Errorf("failed to create feed: %w", err)
 		}
 
-		// Add to OPML
+		// Add to OPML for import/export compatibility
 		opmlTitle := feedTitle
 		if opmlTitle == "" {
 			opmlTitle = feedURL
 		}
 		if err := opmlDoc.AddFeed(feedURL, opmlTitle, folder); err != nil {
-			return fmt.Errorf("failed to add feed to OPML: %w", err)
-		}
-
-		// Save OPML
-		if err := saveOPML(); err != nil {
-			return fmt.Errorf("failed to save OPML: %w", err)
-		}
-
-		// Queue sync change
-		cfg, _ := sync.LoadConfig()
-		if cfg != nil && cfg.IsConfigured() {
-			syncer, err := sync.NewSyncer(cfg, dbConn)
-			if err == nil {
-				defer syncer.Close()
-				ctx := context.Background()
-				if err := syncer.QueueFeedChange(ctx, feedURL, opmlTitle, folder, time.Now(), vault.OpUpsert); err != nil {
-					log.Printf("warning: failed to queue sync: %v", err)
-				}
+			// Non-fatal: OPML is for import/export, Charm is source of truth
+			fmt.Printf("Note: Could not add to OPML: %v\n", err)
+		} else {
+			if err := saveOPML(); err != nil {
+				fmt.Printf("Note: Could not save OPML: %v\n", err)
 			}
 		}
 
@@ -130,7 +106,11 @@ var feedListCmd = &cobra.Command{
 	Short:   "List all feeds",
 	Long:    "List all subscribed feeds with their folders",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		feeds := opmlDoc.AllFeeds()
+		feeds, err := charmClient.ListFeeds()
+		if err != nil {
+			return fmt.Errorf("failed to list feeds: %w", err)
+		}
+
 		if len(feeds) == 0 {
 			fmt.Println("No feeds found. Add a feed with 'digest feed add <url>'")
 			return nil
@@ -138,12 +118,18 @@ var feedListCmd = &cobra.Command{
 
 		fmt.Printf("Found %d feed(s):\n\n", len(feeds))
 		for _, feed := range feeds {
-			if feed.Folder != "" {
-				fmt.Printf("[%s] %s\n", feed.Folder, feed.Title)
-			} else {
-				fmt.Printf("%s\n", feed.Title)
+			title := feed.URL
+			if feed.Title != nil {
+				title = *feed.Title
 			}
-			fmt.Printf("  URL: %s\n\n", feed.URL)
+
+			if feed.Folder != "" {
+				fmt.Printf("[%s] %s\n", feed.Folder, title)
+			} else {
+				fmt.Printf("%s\n", title)
+			}
+			fmt.Printf("  URL: %s\n", feed.URL)
+			fmt.Printf("  ID: %s\n\n", feed.ID)
 		}
 
 		return nil
@@ -153,61 +139,29 @@ var feedListCmd = &cobra.Command{
 var feedRemoveCmd = &cobra.Command{
 	Use:   "remove <url>",
 	Short: "Remove a feed",
-	Long:  "Remove a feed from your subscriptions and OPML",
+	Long:  "Remove a feed from your subscriptions",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		url := args[0]
 
-		// Get feed from database
-		feed, err := db.GetFeedByURL(dbConn, url)
+		// Get feed from Charm
+		feed, err := charmClient.GetFeedByURL(url)
 		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return fmt.Errorf("feed not found: %s", url)
-			}
-			return fmt.Errorf("failed to get feed: %w", err)
+			return fmt.Errorf("feed not found: %s", url)
 		}
 
-		// Get feed info from OPML before removing
-		var feedTitle string
-		for _, f := range opmlDoc.AllFeeds() {
-			if f.URL == url {
-				feedTitle = f.Title
-				break
-			}
-		}
-		if feedTitle == "" {
-			if feed.Title != nil {
-				feedTitle = *feed.Title
-			} else {
-				feedTitle = url
-			}
-		}
-
-		// Delete from database
-		if err := db.DeleteFeed(dbConn, feed.ID); err != nil {
-			return fmt.Errorf("failed to delete feed from database: %w", err)
+		// Delete from Charm (cascade deletes entries, auto-syncs)
+		if err := charmClient.DeleteFeed(feed.ID); err != nil {
+			return fmt.Errorf("failed to delete feed: %w", err)
 		}
 
 		// Remove from OPML
 		if err := opmlDoc.RemoveFeed(url); err != nil {
-			return fmt.Errorf("failed to remove feed from OPML: %w", err)
-		}
-
-		// Save OPML
-		if err := saveOPML(); err != nil {
-			return fmt.Errorf("failed to save OPML: %w", err)
-		}
-
-		// Queue sync change
-		cfg, _ := sync.LoadConfig()
-		if cfg != nil && cfg.IsConfigured() {
-			syncer, err := sync.NewSyncer(cfg, dbConn)
-			if err == nil {
-				defer syncer.Close()
-				ctx := context.Background()
-				if err := syncer.QueueFeedChange(ctx, url, feedTitle, "", time.Now(), vault.OpDelete); err != nil {
-					log.Printf("warning: failed to queue sync: %v", err)
-				}
+			// Non-fatal
+			fmt.Printf("Note: Could not remove from OPML: %v\n", err)
+		} else {
+			if err := saveOPML(); err != nil {
+				fmt.Printf("Note: Could not save OPML: %v\n", err)
 			}
 		}
 
@@ -225,51 +179,24 @@ var feedMoveCmd = &cobra.Command{
 		url := args[0]
 		newFolder := args[1]
 
-		// Verify feed exists in database
-		feed, err := db.GetFeedByURL(dbConn, url)
+		// Get feed from Charm
+		feed, err := charmClient.GetFeedByURL(url)
 		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return fmt.Errorf("feed not found: %s", url)
-			}
-			return fmt.Errorf("failed to get feed: %w", err)
+			return fmt.Errorf("feed not found: %s", url)
+		}
+
+		// Update folder
+		feed.Folder = newFolder
+		if err := charmClient.UpdateFeed(feed); err != nil {
+			return fmt.Errorf("failed to update feed: %w", err)
 		}
 
 		// Move feed in OPML
 		if err := opmlDoc.MoveFeed(url, newFolder); err != nil {
-			return fmt.Errorf("failed to move feed: %w", err)
-		}
-
-		// Save OPML
-		if err := saveOPML(); err != nil {
-			return fmt.Errorf("failed to save OPML: %w", err)
-		}
-
-		// Get feed title for sync
-		var feedTitle string
-		for _, f := range opmlDoc.AllFeeds() {
-			if f.URL == url {
-				feedTitle = f.Title
-				break
-			}
-		}
-		if feedTitle == "" {
-			if feed.Title != nil {
-				feedTitle = *feed.Title
-			} else {
-				feedTitle = url
-			}
-		}
-
-		// Queue sync change
-		cfg, _ := sync.LoadConfig()
-		if cfg != nil && cfg.IsConfigured() {
-			syncer, err := sync.NewSyncer(cfg, dbConn)
-			if err == nil {
-				defer syncer.Close()
-				ctx := context.Background()
-				if err := syncer.QueueFeedChange(ctx, url, feedTitle, newFolder, time.Now(), vault.OpUpsert); err != nil {
-					log.Printf("warning: failed to queue sync: %v", err)
-				}
+			fmt.Printf("Note: Could not move in OPML: %v\n", err)
+		} else {
+			if err := saveOPML(); err != nil {
+				fmt.Printf("Note: Could not save OPML: %v\n", err)
 			}
 		}
 

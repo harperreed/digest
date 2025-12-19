@@ -10,8 +10,6 @@ import (
 	"runtime"
 
 	"github.com/spf13/cobra"
-
-	"github.com/harper/digest/internal/db"
 )
 
 var openCmd = &cobra.Command{
@@ -21,7 +19,7 @@ var openCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Get entry by prefix
-		entry, err := db.GetEntryByPrefix(dbConn, args[0])
+		entry, err := charmClient.GetEntryByPrefix(args[0])
 		if err != nil {
 			return fmt.Errorf("failed to find entry: %w", err)
 		}
@@ -46,7 +44,7 @@ var openCmd = &cobra.Command{
 		}
 
 		// Mark as read
-		if err := db.MarkEntryRead(dbConn, entry.ID); err != nil {
+		if err := charmClient.MarkEntryRead(entry.ID); err != nil {
 			return fmt.Errorf("failed to mark entry as read: %w", err)
 		}
 

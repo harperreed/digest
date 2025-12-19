@@ -4,8 +4,7 @@
 package mcp
 
 import (
-	"database/sql"
-
+	"github.com/harper/digest/internal/charm"
 	"github.com/harper/digest/internal/opml"
 	"github.com/mark3labs/mcp-go/server"
 )
@@ -13,15 +12,15 @@ import (
 // Server wraps the MCP server with digest-specific context
 type Server struct {
 	mcpServer *server.MCPServer
-	db        *sql.DB
+	client    *charm.Client
 	opmlDoc   *opml.Document
 	opmlPath  string
 }
 
 // NewServer creates a new MCP server instance
-func NewServer(db *sql.DB, opmlDoc *opml.Document, opmlPath string) *Server {
+func NewServer(client *charm.Client, opmlDoc *opml.Document, opmlPath string) *Server {
 	s := &Server{
-		db:       db,
+		client:   client,
 		opmlDoc:  opmlDoc,
 		opmlPath: opmlPath,
 	}
