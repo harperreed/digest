@@ -1,6 +1,6 @@
 cloud.google.com/go v0.26.0/go.mod h1:aQUYkXzVsufM+DwF1aE+0xfcU+56JwCaLick0ClmMTw=
-github.com/2389-research/charm v0.0.0-20251219145900-e7eed68720a2 h1:CfX0L18g4a1pNH5v1tPh5l9YODCFnfLGKmvITWI5K6U=
-github.com/2389-research/charm v0.0.0-20251219145900-e7eed68720a2/go.mod h1:bUWspMK1AG81Kigzva9YGG2mbKX9i5QDvo1cnzP/mo0=
+github.com/2389-research/charm v0.0.0-20251219202940-c2de8571a99a h1:7fmjaLHf8tsqa3Ll5cBDMLwD4z/liPy3as3Go5SHVZA=
+github.com/2389-research/charm v0.0.0-20251219202940-c2de8571a99a/go.mod h1:bUWspMK1AG81Kigzva9YGG2mbKX9i5QDvo1cnzP/mo0=
 github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03qcyfWMU=
 github.com/JohannesKaufmann/dom v0.2.0 h1:1bragmEb19K8lHAqgFgqCpiPCFEZMTXzOIEjuxkUfLQ=
 github.com/JohannesKaufmann/dom v0.2.0/go.mod h1:57iSUl5RKric4bUkgos4zu6Xt5LMHUnw3TF1l5CbGZo=

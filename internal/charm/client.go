@@ -49,7 +49,7 @@ func InitClient() (*Client, error) {
 			os.Setenv("CHARM_HOST", DefaultCharmHost)
 		}
 
-		db, err := kv.OpenWithDefaults("digest")
+		db, err := kv.OpenWithDefaultsFallback("digest")
 		if err != nil {
 			clientErr = fmt.Errorf("open charm kv: %w", err)
 			return
@@ -60,8 +60,8 @@ func InitClient() (*Client, error) {
 			autoSync: true,
 		}
 
-		// Pull remote data on startup
-		if globalClient.autoSync {
+		// Pull remote data on startup (skip in read-only mode)
+		if globalClient.autoSync && !globalClient.kv.IsReadOnly() {
 			_ = globalClient.kv.Sync()
 		}
 	})
@@ -90,7 +90,7 @@ func (c *Client) Close() error {
 // syncIfEnabled calls Sync() if auto-sync is enabled.
 // CRITICAL: Must be called after every write operation!
 func (c *Client) syncIfEnabled() {
-	if c.autoSync {
+	if c.autoSync && !c.kv.IsReadOnly() {
 		_ = c.kv.Sync()
 	}
 }
@@ -102,8 +102,17 @@ func (c *Client) SetAutoSync(enabled bool) {
 	c.autoSync = enabled
 }
 
+// IsReadOnly returns true if the database is open in read-only mode.
+// This happens when another process (like an MCP server) holds the lock.
+func (c *Client) IsReadOnly() bool {
+	return c.kv.IsReadOnly()
+}
+
 // Sync manually triggers a sync with the Charm server.
 func (c *Client) Sync() error {
+	if c.kv.IsReadOnly() {
+		return nil // Skip sync in read-only mode
+	}
 	return c.kv.Sync()
 }
 
@@ -138,6 +147,10 @@ func feedKey(id string) []byte {
 func (c *Client) CreateFeed(feed *models.Feed) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	if c.kv.IsReadOnly() {
+		return fmt.Errorf("cannot write: database is locked by another process (MCP server?)")
+	}
 
 	data, err := json.Marshal(feed)
 	if err != nil {
@@ -262,6 +275,10 @@ func (c *Client) DeleteFeed(id string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	if c.kv.IsReadOnly() {
+		return fmt.Errorf("cannot write: database is locked by another process (MCP server?)")
+	}
+
 	// First delete all entries for this feed
 	if err := c.deleteEntriesForFeedLocked(id); err != nil {
 		return fmt.Errorf("delete feed entries: %w", err)
@@ -347,6 +364,10 @@ func entryKey(id string) []byte {
 func (c *Client) CreateEntry(entry *models.Entry) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	if c.kv.IsReadOnly() {
+		return fmt.Errorf("cannot write: database is locked by another process (MCP server?)")
+	}
 
 	data, err := json.Marshal(entry)
 	if err != nil {
@@ -558,6 +579,10 @@ func (c *Client) DeleteEntry(id string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	if c.kv.IsReadOnly() {
+		return fmt.Errorf("cannot write: database is locked by another process (MCP server?)")
+	}
+
 	if err := c.kv.Delete(entryKey(id)); err != nil {
 		return fmt.Errorf("delete entry: %w", err)
 	}
@@ -593,6 +618,10 @@ func (c *Client) MarkEntryUnread(id string) error {
 func (c *Client) MarkEntriesReadBefore(before time.Time) (int64, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	if c.kv.IsReadOnly() {
+		return 0, fmt.Errorf("cannot write: database is locked by another process (MCP server?)")
+	}
 
 	keys, err := c.kv.Keys()
 	if err != nil {
