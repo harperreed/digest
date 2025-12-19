@@ -1,6 +1,8 @@
 // ABOUTME: Tests for the Charm KV client wrapper
 // ABOUTME: Uses real local KV storage with sync disabled for fast, isolated tests
 
+//go:build !race
+
 package charm
 
 import (

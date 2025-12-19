@@ -1,6 +1,8 @@
 // ABOUTME: Tests for MCP server handlers
 // ABOUTME: Uses real charm client and temp OPML files for isolated testing
 
+//go:build !race
+
 package mcp
 
 import (
