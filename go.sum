@@ -1,3 +1,5 @@
+github.com/2389-research/charm v0.0.0-20251220172505-c2ebc1f30d74 h1:EzCavZ9y2iFv82sBECBLBqu0+dng8vrHh6DSV2b24nY=
+github.com/2389-research/charm v0.0.0-20251220172505-c2ebc1f30d74/go.mod h1:hXtIW7xMslPJ4WBrdNyG6E4JZKFIEfgvGv8OvOKbrgc=
 github.com/JohannesKaufmann/dom v0.2.0 h1:1bragmEb19K8lHAqgFgqCpiPCFEZMTXzOIEjuxkUfLQ=
 github.com/JohannesKaufmann/dom v0.2.0/go.mod h1:57iSUl5RKric4bUkgos4zu6Xt5LMHUnw3TF1l5CbGZo=
 github.com/JohannesKaufmann/html-to-markdown/v2 v2.5.0 h1:mklaPbT4f/EiDr1Q+zPrEt9lgKAkVrIBtWf33d9GpVA=
