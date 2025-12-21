@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 )
 
 // Document represents an OPML document with a title and hierarchical outlines
@@ -369,6 +370,11 @@ func (d *Document) Write(w io.Writer) error {
 
 // WriteFile writes the OPML document to a file
 func (d *Document) WriteFile(path string) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create directory: %w", err)
+	}
+
 	file, err := os.Create(path)
 	if err != nil {
 		return fmt.Errorf("failed to create file: %w", err)
