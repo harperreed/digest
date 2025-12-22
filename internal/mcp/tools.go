@@ -380,8 +380,10 @@ func (s *Server) registerBulkMarkReadTool() {
 
 func (s *Server) handleListFeeds(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	// Get all feeds from OPML
+	s.opmlMu.RLock()
 	opmlFeeds := s.opmlDoc.AllFeeds()
 	folders := s.opmlDoc.Folders()
+	s.opmlMu.RUnlock()
 
 	// Get all feeds from charm KV
 	kvFeeds, err := s.client.ListFeeds()
@@ -478,14 +480,18 @@ func (s *Server) handleAddFeed(_ context.Context, req mcp.CallToolRequest) (*mcp
 		folder = *input.Folder
 	}
 
+	s.opmlMu.Lock()
 	if err := s.opmlDoc.AddFeed(input.URL, title, folder); err != nil {
+		s.opmlMu.Unlock()
 		return nil, fmt.Errorf("failed to add feed to OPML: %w", err)
 	}
 
 	// Write OPML back to file
 	if err := s.opmlDoc.WriteFile(s.opmlPath); err != nil {
+		s.opmlMu.Unlock()
 		return nil, fmt.Errorf("failed to write OPML file: %w", err)
 	}
+	s.opmlMu.Unlock()
 
 	output := FeedOutput{
 		ID:         feed.ID,
@@ -522,14 +528,18 @@ func (s *Server) handleRemoveFeed(_ context.Context, req mcp.CallToolRequest) (*
 	}
 
 	// Remove from OPML
+	s.opmlMu.Lock()
 	if err := s.opmlDoc.RemoveFeed(input.URL); err != nil {
+		s.opmlMu.Unlock()
 		return nil, fmt.Errorf("failed to remove feed from OPML: %w", err)
 	}
 
 	// Write OPML back to file
 	if err := s.opmlDoc.WriteFile(s.opmlPath); err != nil {
+		s.opmlMu.Unlock()
 		return nil, fmt.Errorf("failed to write OPML file: %w", err)
 	}
+	s.opmlMu.Unlock()
 
 	output := RemoveFeedOutput{
 		Success: true,
@@ -569,6 +579,7 @@ func (s *Server) handleMoveFeed(_ context.Context, req mcp.CallToolRequest) (*mc
 	}
 
 	// Find current folder for the feed
+	s.opmlMu.RLock()
 	oldFolder := ""
 	found := false
 	for _, feed := range s.opmlDoc.AllFeeds() {
@@ -578,6 +589,8 @@ func (s *Server) handleMoveFeed(_ context.Context, req mcp.CallToolRequest) (*mc
 			break
 		}
 	}
+	s.opmlMu.RUnlock()
+
 	if !found {
 		return nil, fmt.Errorf("feed not found in OPML: %s", input.URL)
 	}
@@ -599,14 +612,18 @@ func (s *Server) handleMoveFeed(_ context.Context, req mcp.CallToolRequest) (*mc
 	}
 
 	// Move the feed
+	s.opmlMu.Lock()
 	if err := s.opmlDoc.MoveFeed(input.URL, input.Folder); err != nil {
+		s.opmlMu.Unlock()
 		return nil, fmt.Errorf("failed to move feed: %w", err)
 	}
 
 	// Write OPML back to file
 	if err := s.opmlDoc.WriteFile(s.opmlPath); err != nil {
+		s.opmlMu.Unlock()
 		return nil, fmt.Errorf("failed to write OPML file: %w", err)
 	}
+	s.opmlMu.Unlock()
 
 	output := MoveFeedOutput{
 		Success:   true,
@@ -624,7 +641,7 @@ func (s *Server) handleMoveFeed(_ context.Context, req mcp.CallToolRequest) (*mc
 	return mcp.NewToolResultText(string(jsonBytes)), nil
 }
 
-func (s *Server) handleSyncFeeds(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (s *Server) handleSyncFeeds(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	var input SyncFeedsInput
 	if err := req.BindArguments(&input); err != nil {
 		return nil, fmt.Errorf("invalid input: %w", err)
@@ -677,7 +694,7 @@ func (s *Server) handleSyncFeeds(_ context.Context, req mcp.CallToolRequest) (*m
 			}(),
 		}
 
-		newCount, wasCached, err := s.syncFeed(feed, force)
+		newCount, wasCached, err := s.syncFeed(ctx, feed, force)
 		if err != nil {
 			errMsg := err.Error()
 			result.Error = &errMsg
@@ -947,7 +964,7 @@ func (s *Server) handleMarkUnread(_ context.Context, req mcp.CallToolRequest) (*
 
 // syncFeed is a helper that fetches and processes a single feed
 // Returns (newCount, wasCached, error)
-func (s *Server) syncFeed(feed *models.Feed, force bool) (int, bool, error) {
+func (s *Server) syncFeed(ctx context.Context, feed *models.Feed, force bool) (int, bool, error) {
 	// Get cache headers from feed (skip if force)
 	var etag, lastModified *string
 	if !force {
@@ -956,7 +973,7 @@ func (s *Server) syncFeed(feed *models.Feed, force bool) (int, bool, error) {
 	}
 
 	// Fetch the feed
-	result, err := fetch.Fetch(feed.URL, etag, lastModified)
+	result, err := fetch.Fetch(ctx, feed.URL, etag, lastModified)
 	if err != nil {
 		// Update error state
 		if updateErr := s.client.UpdateFeedError(feed.ID, err.Error()); updateErr != nil {

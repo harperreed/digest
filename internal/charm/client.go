@@ -89,10 +89,15 @@ func (c *Client) Close() error {
 
 // syncIfEnabled calls Sync() if auto-sync is enabled.
 // CRITICAL: Must be called after every write operation!
-func (c *Client) syncIfEnabled() {
+// NOTE: Caller must NOT hold c.mu lock - this function accesses c.autoSync directly
+// since it's only modified during initialization or via SetAutoSync.
+func (c *Client) syncIfEnabled() error {
 	if c.autoSync && !c.kv.IsReadOnly() {
-		_ = c.kv.Sync()
+		if err := c.kv.Sync(); err != nil {
+			return fmt.Errorf("sync failed: %w", err)
+		}
 	}
+	return nil
 }
 
 // SetAutoSync enables or disables automatic sync after writes.
@@ -105,6 +110,8 @@ func (c *Client) SetAutoSync(enabled bool) {
 // IsReadOnly returns true if the database is open in read-only mode.
 // This happens when another process (like an MCP server) holds the lock.
 func (c *Client) IsReadOnly() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	return c.kv.IsReadOnly()
 }
 
@@ -135,9 +142,7 @@ func GetCharmClient() (*client.Client, error) {
 	return client.NewClientWithDefaults()
 }
 
-// ============================================================================
 // Feed Operations
-// ============================================================================
 
 func feedKey(id string) []byte {
 	return []byte(FeedPrefix + id)
@@ -161,7 +166,10 @@ func (c *Client) CreateFeed(feed *models.Feed) error {
 		return fmt.Errorf("set feed: %w", err)
 	}
 
-	c.syncIfEnabled()
+	if err := c.syncIfEnabled(); err != nil {
+		// Log but don't fail - sync errors shouldn't break local operations
+		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+	}
 	return nil
 }
 
@@ -239,6 +247,7 @@ func (c *Client) ListFeeds() ([]*models.Feed, error) {
 
 	feeds := make([]*models.Feed, 0, len(keys))
 	prefix := []byte(FeedPrefix)
+	warnedCorruption := false
 
 	for _, key := range keys {
 		if !strings.HasPrefix(string(key), string(prefix)) {
@@ -247,11 +256,19 @@ func (c *Client) ListFeeds() ([]*models.Feed, error) {
 
 		data, err := c.kv.Get(key)
 		if err != nil {
+			if !warnedCorruption {
+				fmt.Fprintf(os.Stderr, "Warning: some feeds may be corrupted\n")
+				warnedCorruption = true
+			}
 			continue
 		}
 
 		var feed models.Feed
 		if err := json.Unmarshal(data, &feed); err != nil {
+			if !warnedCorruption {
+				fmt.Fprintf(os.Stderr, "Warning: some feeds may be corrupted\n")
+				warnedCorruption = true
+			}
 			continue
 		}
 		feeds = append(feeds, &feed)
@@ -289,7 +306,10 @@ func (c *Client) DeleteFeed(id string) error {
 		return fmt.Errorf("delete feed: %w", err)
 	}
 
-	c.syncIfEnabled()
+	if err := c.syncIfEnabled(); err != nil {
+		// Log but don't fail - sync errors shouldn't break local operations
+		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+	}
 	return nil
 }
 
@@ -352,9 +372,7 @@ func (c *Client) UpdateFeedError(feedID string, errMsg string) error {
 	return c.UpdateFeed(feed)
 }
 
-// ============================================================================
 // Entry Operations
-// ============================================================================
 
 func entryKey(id string) []byte {
 	return []byte(EntryPrefix + id)
@@ -378,7 +396,10 @@ func (c *Client) CreateEntry(entry *models.Entry) error {
 		return fmt.Errorf("set entry: %w", err)
 	}
 
-	c.syncIfEnabled()
+	if err := c.syncIfEnabled(); err != nil {
+		// Log but don't fail - sync errors shouldn't break local operations
+		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+	}
 	return nil
 }
 
@@ -526,6 +547,7 @@ func (c *Client) ListEntries(filter *EntryFilter) ([]*models.Entry, error) {
 
 	entries := make([]*models.Entry, 0, len(keys))
 	prefix := []byte(EntryPrefix)
+	warnedCorruption := false
 
 	// Build feed ID set for efficient lookup
 	feedIDSet := make(map[string]bool)
@@ -542,11 +564,19 @@ func (c *Client) ListEntries(filter *EntryFilter) ([]*models.Entry, error) {
 
 		data, err := c.kv.Get(key)
 		if err != nil {
+			if !warnedCorruption {
+				fmt.Fprintf(os.Stderr, "Warning: some entries may be corrupted\n")
+				warnedCorruption = true
+			}
 			continue
 		}
 
 		var entry models.Entry
 		if err := json.Unmarshal(data, &entry); err != nil {
+			if !warnedCorruption {
+				fmt.Fprintf(os.Stderr, "Warning: some entries may be corrupted\n")
+				warnedCorruption = true
+			}
 			continue
 		}
 
@@ -587,7 +617,10 @@ func (c *Client) DeleteEntry(id string) error {
 		return fmt.Errorf("delete entry: %w", err)
 	}
 
-	c.syncIfEnabled()
+	if err := c.syncIfEnabled(); err != nil {
+		// Log but don't fail - sync errors shouldn't break local operations
+		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+	}
 	return nil
 }
 
@@ -667,7 +700,10 @@ func (c *Client) MarkEntriesReadBefore(before time.Time) (int64, error) {
 		}
 	}
 
-	c.syncIfEnabled()
+	if err := c.syncIfEnabled(); err != nil {
+		// Log but don't fail - sync errors shouldn't break local operations
+		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+	}
 	return count, nil
 }
 
@@ -719,9 +755,7 @@ func (c *Client) CountUnreadEntries(feedID *string) (int, error) {
 	return len(entries), nil
 }
 
-// ============================================================================
 // Stats
-// ============================================================================
 
 // FeedStatsRow represents statistics for a single feed.
 type FeedStatsRow struct {
@@ -809,8 +843,43 @@ func (c *Client) GetOverallStats() (*OverallStats, error) {
 }
 
 // ============================================================================
-// Helper for creating new entries (preserves existing interface)
+// Retrieval helpers (exact ID or prefix)
 // ============================================================================
+
+// GetEntryByIDOrPrefix tries to get an entry by exact ID first,
+// then falls back to prefix matching if not found.
+func (c *Client) GetEntryByIDOrPrefix(ref string) (*models.Entry, error) {
+	entry, err := c.GetEntry(ref)
+	if err == nil {
+		return entry, nil
+	}
+
+	// Try prefix match
+	entry, err = c.GetEntryByPrefix(ref)
+	if err != nil {
+		return nil, fmt.Errorf("entry not found: %s", ref)
+	}
+	return entry, nil
+}
+
+// GetFeedByURLOrPrefix tries to get a feed by exact URL first,
+// then falls back to prefix matching if not found.
+func (c *Client) GetFeedByURLOrPrefix(ref string) (*models.Feed, error) {
+	feed, err := c.GetFeedByURL(ref)
+	if err == nil {
+		return feed, nil
+	}
+
+	// Try prefix match
+	feed, err = c.GetFeedByPrefix(ref)
+	if err != nil {
+		return nil, fmt.Errorf("feed not found: %s", ref)
+	}
+	return feed, nil
+}
+
+// ============================================================================
+// Helper for creating new entries (preserves existing interface)
 
 // NewFeed creates a new feed with generated ID.
 func NewFeed(url string) *models.Feed {

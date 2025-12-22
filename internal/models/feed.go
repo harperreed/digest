@@ -4,10 +4,14 @@
 package models
 
 import (
+	"fmt"
+	"net/url"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+const DefaultFeedTitle = "Untitled Feed"
 
 // Feed represents an RSS/Atom feed subscription
 type Feed struct {
@@ -40,4 +44,36 @@ func (f *Feed) SetCacheHeaders(etag, lastModified string) {
 	if lastModified != "" {
 		f.LastModified = &lastModified
 	}
+}
+
+// GetTitle returns the feed title, or "Untitled Feed" if not set
+func (f *Feed) GetTitle() string {
+	if f.Title != nil && *f.Title != "" {
+		return *f.Title
+	}
+	return DefaultFeedTitle
+}
+
+// GetDisplayName returns the feed title if set, otherwise the URL
+func (f *Feed) GetDisplayName() string {
+	if f.Title != nil && *f.Title != "" {
+		return *f.Title
+	}
+	return f.URL
+}
+
+// ValidateFeedURL checks that a URL is valid for use as a feed URL.
+// Returns the parsed URL if valid, or an error describing the problem.
+func ValidateFeedURL(urlStr string) (*url.URL, error) {
+	parsedURL, err := url.Parse(urlStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid URL: %w", err)
+	}
+	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+		return nil, fmt.Errorf("URL must use http or https scheme, got: %s", parsedURL.Scheme)
+	}
+	if parsedURL.Host == "" {
+		return nil, fmt.Errorf("URL must have a host")
+	}
+	return parsedURL, nil
 }

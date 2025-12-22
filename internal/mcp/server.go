@@ -4,6 +4,8 @@
 package mcp
 
 import (
+	"sync"
+
 	"github.com/harper/digest/internal/charm"
 	"github.com/harper/digest/internal/opml"
 	"github.com/mark3labs/mcp-go/server"
@@ -15,6 +17,7 @@ type Server struct {
 	client    *charm.Client
 	opmlDoc   *opml.Document
 	opmlPath  string
+	opmlMu    sync.RWMutex
 }
 
 // NewServer creates a new MCP server instance

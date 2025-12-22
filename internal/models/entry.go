@@ -9,6 +9,8 @@ import (
 	"github.com/google/uuid"
 )
 
+const DefaultEntryTitle = "Untitled"
+
 // Entry represents a single entry (article/item) in an RSS/Atom feed
 type Entry struct {
 	ID          string
@@ -50,4 +52,12 @@ func (e *Entry) MarkRead() {
 func (e *Entry) MarkUnread() {
 	e.Read = false
 	e.ReadAt = nil
+}
+
+// GetTitle returns the entry title, or "Untitled" if not set
+func (e *Entry) GetTitle() string {
+	if e.Title != nil && *e.Title != "" {
+		return *e.Title
+	}
+	return DefaultEntryTitle
 }
