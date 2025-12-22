@@ -6,7 +6,7 @@ before:
   hooks:
     - go mod tidy
     # Skip charm tests in CI - they require SSH auth to charm server
-    - go test $(go list ./... | grep -v /internal/charm)
+    - sh -c "go test $(go list ./... | grep -v /internal/charm)"
 
 builds:
   - id: digest
