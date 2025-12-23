@@ -74,7 +74,7 @@ func InitClient() (*Client, error) {
 
 		globalClient = &Client{
 			kv:       db,
-			autoSync: false, // Disabled: 20MB DB + sync-per-write = disk explosion
+			autoSync: true, // Re-enabled: run 'digest sync compact' to shrink bloated DBs
 		}
 
 		// Pull remote data on startup (skip in read-only mode)
