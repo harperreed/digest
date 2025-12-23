@@ -1,5 +1,5 @@
-// ABOUTME: Charm KV client wrapper for digest with automatic cloud sync
-// ABOUTME: Provides thread-safe initialization and sync-on-write for seamless multi-device sync
+// ABOUTME: Charm KV client wrapper using transactional Do API
+// ABOUTME: Short-lived connections to avoid lock contention with other MCP servers
 
 package charm
 
@@ -9,7 +9,6 @@ import (
 	"os"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/charmbracelet/charm/client"
@@ -25,124 +24,69 @@ const (
 
 	// Default Charm server
 	DefaultCharmHost = "charm.2389.dev"
+
+	// DBName is the name of the charm kv database for digest.
+	DBName = "digest"
 )
 
-var (
-	globalClient *Client
-	clientOnce   sync.Once
-	clientErr    error
-)
-
-// Client wraps Charm KV with digest-specific operations.
+// Client holds configuration for KV operations.
+// Unlike the previous implementation, it does NOT hold a persistent connection.
+// Each operation opens the database, performs the operation, and closes it.
 type Client struct {
-	kv       *kv.KV
-	mu       sync.RWMutex
+	dbName   string
 	autoSync bool
 }
 
-// entryMeta contains entry metadata without full content for cloud sync.
-// Content is excluded to reduce charm cloud storage usage - articles can be
-// re-fetched from their original URLs when needed.
-type entryMeta struct {
-	ID          string     `json:"id"`
-	FeedID      string     `json:"feed_id"`
-	GUID        string     `json:"guid"`
-	Title       *string    `json:"title,omitempty"`
-	Link        *string    `json:"link,omitempty"`
-	Author      *string    `json:"author,omitempty"`
-	PublishedAt *time.Time `json:"published_at,omitempty"`
-	Read        bool       `json:"read"`
-	ReadAt      *time.Time `json:"read_at,omitempty"`
-	CreatedAt   time.Time  `json:"created_at"`
-	// Content is intentionally excluded - stored locally only
+// NewClient creates a new client.
+func NewClient() (*Client, error) {
+	// Set Charm server before operations
+	if os.Getenv("CHARM_HOST") == "" {
+		os.Setenv("CHARM_HOST", DefaultCharmHost)
+	}
+
+	return &Client{
+		dbName:   DBName,
+		autoSync: true, // Auto-sync enabled for seamless multi-device sync
+	}, nil
 }
 
-// InitClient initializes the global Charm client.
-// Thread-safe via sync.Once.
-func InitClient() (*Client, error) {
-	clientOnce.Do(func() {
-		// Set Charm server before opening KV
-		if os.Getenv("CHARM_HOST") == "" {
-			os.Setenv("CHARM_HOST", DefaultCharmHost)
-		}
+// DoReadOnly executes a function with read-only database access.
+// Use this for batch read operations that need multiple Gets.
+func (c *Client) DoReadOnly(fn func(k *kv.KV) error) error {
+	return kv.DoReadOnly(c.dbName, fn)
+}
 
-		db, err := kv.OpenWithDefaultsFallback("digest")
-		if err != nil {
-			clientErr = fmt.Errorf("open charm kv: %w", err)
-			return
+// Do executes a function with write access to the database.
+// Use this for batch write operations.
+func (c *Client) Do(fn func(k *kv.KV) error) error {
+	return kv.Do(c.dbName, func(k *kv.KV) error {
+		if err := fn(k); err != nil {
+			return err
 		}
-
-		globalClient = &Client{
-			kv:       db,
-			autoSync: true, // Re-enabled: run 'digest sync compact' to shrink bloated DBs
+		if c.autoSync {
+			return k.Sync()
 		}
-
-		// Pull remote data on startup (skip in read-only mode)
-		if globalClient.autoSync && !globalClient.kv.IsReadOnly() {
-			_ = globalClient.kv.Sync()
-		}
+		return nil
 	})
-
-	if clientErr != nil {
-		return nil, clientErr
-	}
-	return globalClient, nil
-}
-
-// GetClient returns the global client, initializing if needed.
-func GetClient() (*Client, error) {
-	return InitClient()
-}
-
-// Close closes the KV store.
-func (c *Client) Close() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.kv != nil {
-		return c.kv.Close()
-	}
-	return nil
-}
-
-// syncIfEnabled calls Sync() if auto-sync is enabled.
-// CRITICAL: Must be called after every write operation!
-// NOTE: Caller must NOT hold c.mu lock - this function accesses c.autoSync directly
-// since it's only modified during initialization or via SetAutoSync.
-func (c *Client) syncIfEnabled() error {
-	if c.autoSync && !c.kv.IsReadOnly() {
-		if err := c.kv.Sync(); err != nil {
-			return fmt.Errorf("sync failed: %w", err)
-		}
-	}
-	return nil
 }
 
 // SetAutoSync enables or disables automatic sync after writes.
 func (c *Client) SetAutoSync(enabled bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
 	c.autoSync = enabled
-}
-
-// IsReadOnly returns true if the database is open in read-only mode.
-// This happens when another process (like an MCP server) holds the lock.
-func (c *Client) IsReadOnly() bool {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.kv.IsReadOnly()
 }
 
 // Sync manually triggers a sync with the Charm server.
 func (c *Client) Sync() error {
-	if c.kv.IsReadOnly() {
-		return nil // Skip sync in read-only mode
-	}
-	return c.kv.Sync()
+	return kv.Do(c.dbName, func(k *kv.KV) error {
+		return k.Sync()
+	})
 }
 
 // Reset wipes all local data (for sync wipe command).
 func (c *Client) Reset() error {
-	return c.kv.Reset()
+	return kv.Do(c.dbName, func(k *kv.KV) error {
+		return k.Reset()
+	})
 }
 
 // ID returns the user's Charm ID for status display.
@@ -152,6 +96,12 @@ func (c *Client) ID() (string, error) {
 		return "", err
 	}
 	return cc.ID()
+}
+
+// Close is a no-op for backwards compatibility.
+// With Do API, connections are automatically closed after each operation.
+func (c *Client) Close() error {
+	return nil
 }
 
 // GetCharmClient returns a new Charm client for low-level operations.
@@ -167,45 +117,31 @@ func feedKey(id string) []byte {
 
 // CreateFeed stores a new feed.
 func (c *Client) CreateFeed(feed *models.Feed) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.kv.IsReadOnly() {
-		return fmt.Errorf("cannot write: database is locked by another process (MCP server?)")
-	}
-
 	data, err := json.Marshal(feed)
 	if err != nil {
 		return fmt.Errorf("marshal feed: %w", err)
 	}
 
-	if err := c.kv.Set(feedKey(feed.ID), data); err != nil {
-		return fmt.Errorf("set feed: %w", err)
-	}
-
-	if err := c.syncIfEnabled(); err != nil {
-		// Log but don't fail - sync errors shouldn't break local operations
-		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
-	}
-	return nil
+	return c.Do(func(k *kv.KV) error {
+		return k.Set(feedKey(feed.ID), data)
+	})
 }
 
 // GetFeed retrieves a feed by ID.
 func (c *Client) GetFeed(id string) (*models.Feed, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	data, err := c.kv.Get(feedKey(id))
-	if err != nil {
-		return nil, fmt.Errorf("get feed: %w", err)
-	}
-	if data == nil {
-		return nil, fmt.Errorf("feed not found: %s", id)
-	}
-
 	var feed models.Feed
-	if err := json.Unmarshal(data, &feed); err != nil {
-		return nil, fmt.Errorf("unmarshal feed: %w", err)
+	err := c.DoReadOnly(func(k *kv.KV) error {
+		data, err := k.Get(feedKey(id))
+		if err != nil {
+			return fmt.Errorf("get feed: %w", err)
+		}
+		if data == nil {
+			return fmt.Errorf("feed not found: %s", id)
+		}
+		return json.Unmarshal(data, &feed)
+	})
+	if err != nil {
+		return nil, err
 	}
 	return &feed, nil
 }
@@ -254,41 +190,46 @@ func (c *Client) GetFeedByPrefix(prefix string) (*models.Feed, error) {
 
 // ListFeeds returns all feeds, sorted by creation date (newest first).
 func (c *Client) ListFeeds() ([]*models.Feed, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	keys, err := c.kv.Keys()
-	if err != nil {
-		return nil, fmt.Errorf("list keys: %w", err)
-	}
-
-	feeds := make([]*models.Feed, 0, len(keys))
+	var feeds []*models.Feed
 	prefix := []byte(FeedPrefix)
 	warnedCorruption := false
 
-	for _, key := range keys {
-		if !strings.HasPrefix(string(key), string(prefix)) {
-			continue
-		}
-
-		data, err := c.kv.Get(key)
+	err := c.DoReadOnly(func(k *kv.KV) error {
+		keys, err := k.Keys()
 		if err != nil {
-			if !warnedCorruption {
-				fmt.Fprintf(os.Stderr, "Warning: some feeds may be corrupted\n")
-				warnedCorruption = true
-			}
-			continue
+			return fmt.Errorf("list keys: %w", err)
 		}
 
-		var feed models.Feed
-		if err := json.Unmarshal(data, &feed); err != nil {
-			if !warnedCorruption {
-				fmt.Fprintf(os.Stderr, "Warning: some feeds may be corrupted\n")
-				warnedCorruption = true
+		feeds = make([]*models.Feed, 0, len(keys))
+
+		for _, key := range keys {
+			if !strings.HasPrefix(string(key), string(prefix)) {
+				continue
 			}
-			continue
+
+			data, err := k.Get(key)
+			if err != nil {
+				if !warnedCorruption {
+					fmt.Fprintf(os.Stderr, "Warning: some feeds may be corrupted\n")
+					warnedCorruption = true
+				}
+				continue
+			}
+
+			var feed models.Feed
+			if err := json.Unmarshal(data, &feed); err != nil {
+				if !warnedCorruption {
+					fmt.Fprintf(os.Stderr, "Warning: some feeds may be corrupted\n")
+					warnedCorruption = true
+				}
+				continue
+			}
+			feeds = append(feeds, &feed)
 		}
-		feeds = append(feeds, &feed)
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	// Sort by created_at descending
@@ -306,33 +247,23 @@ func (c *Client) UpdateFeed(feed *models.Feed) error {
 
 // DeleteFeed removes a feed and all its entries (cascade).
 func (c *Client) DeleteFeed(id string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	return c.Do(func(k *kv.KV) error {
+		// First delete all entries for this feed
+		if err := c.deleteEntriesForFeedWithKV(k, id); err != nil {
+			return fmt.Errorf("delete feed entries: %w", err)
+		}
 
-	if c.kv.IsReadOnly() {
-		return fmt.Errorf("cannot write: database is locked by another process (MCP server?)")
-	}
-
-	// First delete all entries for this feed
-	if err := c.deleteEntriesForFeedLocked(id); err != nil {
-		return fmt.Errorf("delete feed entries: %w", err)
-	}
-
-	// Then delete the feed itself
-	if err := c.kv.Delete(feedKey(id)); err != nil {
-		return fmt.Errorf("delete feed: %w", err)
-	}
-
-	if err := c.syncIfEnabled(); err != nil {
-		// Log but don't fail - sync errors shouldn't break local operations
-		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
-	}
-	return nil
+		// Then delete the feed itself
+		if err := k.Delete(feedKey(id)); err != nil {
+			return fmt.Errorf("delete feed: %w", err)
+		}
+		return nil
+	})
 }
 
-// deleteEntriesForFeedLocked removes all entries for a feed (must hold lock).
-func (c *Client) deleteEntriesForFeedLocked(feedID string) error {
-	keys, err := c.kv.Keys()
+// deleteEntriesForFeedWithKV removes all entries for a feed (internal helper).
+func (c *Client) deleteEntriesForFeedWithKV(k *kv.KV, feedID string) error {
+	keys, err := k.Keys()
 	if err != nil {
 		return err
 	}
@@ -343,7 +274,7 @@ func (c *Client) deleteEntriesForFeedLocked(feedID string) error {
 			continue
 		}
 
-		data, err := c.kv.Get(key)
+		data, err := k.Get(key)
 		if err != nil {
 			continue
 		}
@@ -354,7 +285,7 @@ func (c *Client) deleteEntriesForFeedLocked(feedID string) error {
 		}
 
 		if entry.FeedID == feedID {
-			_ = c.kv.Delete(key)
+			_ = k.Delete(key)
 		}
 	}
 	return nil
@@ -395,65 +326,33 @@ func entryKey(id string) []byte {
 	return []byte(EntryPrefix + id)
 }
 
-// toEntryMeta converts an Entry to entryMeta, excluding Content for cloud sync.
-func toEntryMeta(e *models.Entry) entryMeta {
-	return entryMeta{
-		ID:          e.ID,
-		FeedID:      e.FeedID,
-		GUID:        e.GUID,
-		Title:       e.Title,
-		Link:        e.Link,
-		Author:      e.Author,
-		PublishedAt: e.PublishedAt,
-		Read:        e.Read,
-		ReadAt:      e.ReadAt,
-		CreatedAt:   e.CreatedAt,
-	}
-}
-
-// CreateEntry stores a new entry (metadata only, content excluded from cloud sync).
+// CreateEntry stores a new entry.
 func (c *Client) CreateEntry(entry *models.Entry) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.kv.IsReadOnly() {
-		return fmt.Errorf("cannot write: database is locked by another process (MCP server?)")
-	}
-
-	// Store metadata only - Content is excluded to save charm cloud storage
-	meta := toEntryMeta(entry)
-	data, err := json.Marshal(meta)
+	data, err := json.Marshal(entry)
 	if err != nil {
 		return fmt.Errorf("marshal entry: %w", err)
 	}
 
-	if err := c.kv.Set(entryKey(entry.ID), data); err != nil {
-		return fmt.Errorf("set entry: %w", err)
-	}
-
-	if err := c.syncIfEnabled(); err != nil {
-		// Log but don't fail - sync errors shouldn't break local operations
-		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
-	}
-	return nil
+	return c.Do(func(k *kv.KV) error {
+		return k.Set(entryKey(entry.ID), data)
+	})
 }
 
 // GetEntry retrieves an entry by ID.
 func (c *Client) GetEntry(id string) (*models.Entry, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	data, err := c.kv.Get(entryKey(id))
-	if err != nil {
-		return nil, fmt.Errorf("get entry: %w", err)
-	}
-	if data == nil {
-		return nil, fmt.Errorf("entry not found: %s", id)
-	}
-
 	var entry models.Entry
-	if err := json.Unmarshal(data, &entry); err != nil {
-		return nil, fmt.Errorf("unmarshal entry: %w", err)
+	err := c.DoReadOnly(func(k *kv.KV) error {
+		data, err := k.Get(entryKey(id))
+		if err != nil {
+			return fmt.Errorf("get entry: %w", err)
+		}
+		if data == nil {
+			return fmt.Errorf("entry not found: %s", id)
+		}
+		return json.Unmarshal(data, &entry)
+	})
+	if err != nil {
+		return nil, err
 	}
 	return &entry, nil
 }
@@ -464,38 +363,43 @@ func (c *Client) GetEntryByPrefix(prefix string) (*models.Entry, error) {
 		return nil, fmt.Errorf("prefix must be at least 6 characters")
 	}
 
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	keys, err := c.kv.Keys()
-	if err != nil {
-		return nil, err
-	}
-
-	matches := make([]*models.Entry, 0, 2) // Expect 0-2 matches for prefix lookup
+	var matches []*models.Entry
 	entryPfx := []byte(EntryPrefix)
 
-	for _, key := range keys {
-		if !strings.HasPrefix(string(key), string(entryPfx)) {
-			continue
-		}
-
-		// Extract ID from key
-		id := strings.TrimPrefix(string(key), EntryPrefix)
-		if !strings.HasPrefix(id, prefix) {
-			continue
-		}
-
-		data, err := c.kv.Get(key)
+	err := c.DoReadOnly(func(k *kv.KV) error {
+		keys, err := k.Keys()
 		if err != nil {
-			continue
+			return err
 		}
 
-		var entry models.Entry
-		if err := json.Unmarshal(data, &entry); err != nil {
-			continue
+		matches = make([]*models.Entry, 0, 2) // Expect 0-2 matches for prefix lookup
+
+		for _, key := range keys {
+			if !strings.HasPrefix(string(key), string(entryPfx)) {
+				continue
+			}
+
+			// Extract ID from key
+			id := strings.TrimPrefix(string(key), EntryPrefix)
+			if !strings.HasPrefix(id, prefix) {
+				continue
+			}
+
+			data, err := k.Get(key)
+			if err != nil {
+				continue
+			}
+
+			var entry models.Entry
+			if err := json.Unmarshal(data, &entry); err != nil {
+				continue
+			}
+			matches = append(matches, &entry)
 		}
-		matches = append(matches, &entry)
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	if len(matches) == 0 {
@@ -572,15 +476,7 @@ func applyPagination(entries []*models.Entry, filter *EntryFilter) []*models.Ent
 
 // ListEntries returns entries matching the filter, sorted by published date.
 func (c *Client) ListEntries(filter *EntryFilter) ([]*models.Entry, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	keys, err := c.kv.Keys()
-	if err != nil {
-		return nil, fmt.Errorf("list keys: %w", err)
-	}
-
-	entries := make([]*models.Entry, 0, len(keys))
+	var entries []*models.Entry
 	prefix := []byte(EntryPrefix)
 	warnedCorruption := false
 
@@ -592,32 +488,45 @@ func (c *Client) ListEntries(filter *EntryFilter) ([]*models.Entry, error) {
 		}
 	}
 
-	for _, key := range keys {
-		if !strings.HasPrefix(string(key), string(prefix)) {
-			continue
-		}
-
-		data, err := c.kv.Get(key)
+	err := c.DoReadOnly(func(k *kv.KV) error {
+		keys, err := k.Keys()
 		if err != nil {
-			if !warnedCorruption {
-				fmt.Fprintf(os.Stderr, "Warning: some entries may be corrupted\n")
-				warnedCorruption = true
-			}
-			continue
+			return fmt.Errorf("list keys: %w", err)
 		}
 
-		var entry models.Entry
-		if err := json.Unmarshal(data, &entry); err != nil {
-			if !warnedCorruption {
-				fmt.Fprintf(os.Stderr, "Warning: some entries may be corrupted\n")
-				warnedCorruption = true
-			}
-			continue
-		}
+		entries = make([]*models.Entry, 0, len(keys))
 
-		if entryMatchesFilter(&entry, filter, feedIDSet) {
-			entries = append(entries, &entry)
+		for _, key := range keys {
+			if !strings.HasPrefix(string(key), string(prefix)) {
+				continue
+			}
+
+			data, err := k.Get(key)
+			if err != nil {
+				if !warnedCorruption {
+					fmt.Fprintf(os.Stderr, "Warning: some entries may be corrupted\n")
+					warnedCorruption = true
+				}
+				continue
+			}
+
+			var entry models.Entry
+			if err := json.Unmarshal(data, &entry); err != nil {
+				if !warnedCorruption {
+					fmt.Fprintf(os.Stderr, "Warning: some entries may be corrupted\n")
+					warnedCorruption = true
+				}
+				continue
+			}
+
+			if entryMatchesFilter(&entry, filter, feedIDSet) {
+				entries = append(entries, &entry)
+			}
 		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	// Sort by published_at descending
@@ -641,22 +550,9 @@ func (c *Client) UpdateEntry(entry *models.Entry) error {
 
 // DeleteEntry removes an entry.
 func (c *Client) DeleteEntry(id string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.kv.IsReadOnly() {
-		return fmt.Errorf("cannot write: database is locked by another process (MCP server?)")
-	}
-
-	if err := c.kv.Delete(entryKey(id)); err != nil {
-		return fmt.Errorf("delete entry: %w", err)
-	}
-
-	if err := c.syncIfEnabled(); err != nil {
-		// Log but don't fail - sync errors shouldn't break local operations
-		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
-	}
-	return nil
+	return c.Do(func(k *kv.KV) error {
+		return k.Delete(entryKey(id))
+	})
 }
 
 // MarkEntryRead marks an entry as read.
@@ -684,95 +580,91 @@ func (c *Client) MarkEntryUnread(id string) error {
 // MarkEntriesReadBefore marks all unread entries before the given time as read.
 // Returns the count of entries marked.
 func (c *Client) MarkEntriesReadBefore(before time.Time) (int64, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.kv.IsReadOnly() {
-		return 0, fmt.Errorf("cannot write: database is locked by another process (MCP server?)")
-	}
-
-	keys, err := c.kv.Keys()
-	if err != nil {
-		return 0, err
-	}
-
 	var count int64
-	prefix := []byte(EntryPrefix)
 	now := time.Now()
 
-	for _, key := range keys {
-		if !strings.HasPrefix(string(key), string(prefix)) {
-			continue
-		}
-
-		data, err := c.kv.Get(key)
+	err := c.Do(func(k *kv.KV) error {
+		keys, err := k.Keys()
 		if err != nil {
-			continue
+			return err
 		}
 
-		var entry models.Entry
-		if err := json.Unmarshal(data, &entry); err != nil {
-			continue
-		}
+		prefix := []byte(EntryPrefix)
+		for _, key := range keys {
+			if !strings.HasPrefix(string(key), string(prefix)) {
+				continue
+			}
 
-		if entry.Read {
-			continue
-		}
-
-		if entry.PublishedAt != nil && entry.PublishedAt.Before(before) {
-			entry.Read = true
-			entry.ReadAt = &now
-
-			updatedData, err := json.Marshal(&entry)
+			data, err := k.Get(key)
 			if err != nil {
 				continue
 			}
 
-			if err := c.kv.Set(key, updatedData); err != nil {
+			var entry models.Entry
+			if err := json.Unmarshal(data, &entry); err != nil {
 				continue
 			}
-			count++
-		}
-	}
 
-	if err := c.syncIfEnabled(); err != nil {
-		// Log but don't fail - sync errors shouldn't break local operations
-		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
-	}
-	return count, nil
+			if entry.Read {
+				continue
+			}
+
+			if entry.PublishedAt != nil && entry.PublishedAt.Before(before) {
+				entry.Read = true
+				entry.ReadAt = &now
+
+				updatedData, err := json.Marshal(&entry)
+				if err != nil {
+					continue
+				}
+
+				if err := k.Set(key, updatedData); err != nil {
+					continue
+				}
+				count++
+			}
+		}
+		return nil
+	})
+
+	return count, err
 }
 
 // EntryExists checks if an entry exists with the given feed_id and guid.
 func (c *Client) EntryExists(feedID, guid string) (bool, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	keys, err := c.kv.Keys()
-	if err != nil {
-		return false, err
-	}
-
+	var exists bool
 	prefix := []byte(EntryPrefix)
-	for _, key := range keys {
-		if !strings.HasPrefix(string(key), string(prefix)) {
-			continue
-		}
 
-		data, err := c.kv.Get(key)
+	err := c.DoReadOnly(func(k *kv.KV) error {
+		keys, err := k.Keys()
 		if err != nil {
-			continue
+			return err
 		}
 
-		var entry models.Entry
-		if err := json.Unmarshal(data, &entry); err != nil {
-			continue
-		}
+		for _, key := range keys {
+			if !strings.HasPrefix(string(key), string(prefix)) {
+				continue
+			}
 
-		if entry.FeedID == feedID && entry.GUID == guid {
-			return true, nil
+			data, err := k.Get(key)
+			if err != nil {
+				continue
+			}
+
+			var entry models.Entry
+			if err := json.Unmarshal(data, &entry); err != nil {
+				continue
+			}
+
+			if entry.FeedID == feedID && entry.GUID == guid {
+				exists = true
+				return nil
+			}
 		}
-	}
-	return false, nil
+		return nil
+	})
+
+	return exists, err
 }
 
 // CountUnreadEntries counts unread entries, optionally filtered by feedID.
@@ -938,11 +830,43 @@ func NewEntry(feedID, guid, title string) *models.Entry {
 	}
 }
 
-// NewTestClient creates a Client for testing with a provided KV store.
+// ============================================================================
+// Legacy compatibility layer
+// ============================================================================
+
+var globalClient *Client
+
+// InitClient initializes the global charm client.
+// With the new architecture, this just creates a Client instance.
+func InitClient() (*Client, error) {
+	if globalClient != nil {
+		return globalClient, nil
+	}
+	var err error
+	globalClient, err = NewClient()
+	return globalClient, err
+}
+
+// GetClient returns the global client, initializing if needed.
+func GetClient() (*Client, error) {
+	return InitClient()
+}
+
+// NewTestClient creates a Client for testing.
+// The db parameter is ignored (kept for backward compatibility).
 // The autoSync parameter controls whether writes trigger sync (usually false for tests).
 func NewTestClient(db *kv.KV, autoSync bool) *Client {
 	return &Client{
-		kv:       db,
+		dbName:   DBName,
+		autoSync: autoSync,
+	}
+}
+
+// NewTestClientWithDBName creates a Client for testing with a custom database name.
+// Use this when you need isolated test databases.
+func NewTestClientWithDBName(dbName string, autoSync bool) *Client {
+	return &Client{
+		dbName:   dbName,
 		autoSync: autoSync,
 	}
 }

@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/charmbracelet/charm/kv"
 	"github.com/harper/digest/internal/charm"
 	"github.com/harper/digest/internal/opml"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -80,15 +79,7 @@ func newTestCharmClient(t *testing.T) *charm.Client {
 		os.Unsetenv("CHARM_DATA_DIR")
 	})
 
-	db, err := kv.OpenWithDefaults(dbName)
-	if err != nil {
-		t.Fatalf("failed to open test kv: %v", err)
-	}
-	t.Cleanup(func() {
-		db.Close()
-	})
-
-	return charm.NewTestClient(db, false)
+	return charm.NewTestClientWithDBName(dbName, false)
 }
 
 func TestHandleListFeeds(t *testing.T) {

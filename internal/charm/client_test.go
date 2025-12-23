@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/charmbracelet/charm/kv"
 	"github.com/harper/digest/internal/models"
 )
 
@@ -37,18 +36,7 @@ func newTestClient(t *testing.T) *Client {
 		os.Unsetenv("CHARM_DATA_DIR")
 	})
 
-	db, err := kv.OpenWithDefaults(dbName)
-	if err != nil {
-		t.Fatalf("failed to open test kv: %v", err)
-	}
-	t.Cleanup(func() {
-		db.Close()
-	})
-
-	return &Client{
-		kv:       db,
-		autoSync: false, // Disable sync for tests
-	}
+	return NewTestClientWithDBName(dbName, false)
 }
 
 func TestNewFeed(t *testing.T) {
