@@ -40,6 +40,23 @@ type Client struct {
 	autoSync bool
 }
 
+// entryMeta contains entry metadata without full content for cloud sync.
+// Content is excluded to reduce charm cloud storage usage - articles can be
+// re-fetched from their original URLs when needed.
+type entryMeta struct {
+	ID          string     `json:"id"`
+	FeedID      string     `json:"feed_id"`
+	GUID        string     `json:"guid"`
+	Title       *string    `json:"title,omitempty"`
+	Link        *string    `json:"link,omitempty"`
+	Author      *string    `json:"author,omitempty"`
+	PublishedAt *time.Time `json:"published_at,omitempty"`
+	Read        bool       `json:"read"`
+	ReadAt      *time.Time `json:"read_at,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	// Content is intentionally excluded - stored locally only
+}
+
 // InitClient initializes the global Charm client.
 // Thread-safe via sync.Once.
 func InitClient() (*Client, error) {
@@ -378,7 +395,23 @@ func entryKey(id string) []byte {
 	return []byte(EntryPrefix + id)
 }
 
-// CreateEntry stores a new entry.
+// toEntryMeta converts an Entry to entryMeta, excluding Content for cloud sync.
+func toEntryMeta(e *models.Entry) entryMeta {
+	return entryMeta{
+		ID:          e.ID,
+		FeedID:      e.FeedID,
+		GUID:        e.GUID,
+		Title:       e.Title,
+		Link:        e.Link,
+		Author:      e.Author,
+		PublishedAt: e.PublishedAt,
+		Read:        e.Read,
+		ReadAt:      e.ReadAt,
+		CreatedAt:   e.CreatedAt,
+	}
+}
+
+// CreateEntry stores a new entry (metadata only, content excluded from cloud sync).
 func (c *Client) CreateEntry(entry *models.Entry) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -387,7 +420,9 @@ func (c *Client) CreateEntry(entry *models.Entry) error {
 		return fmt.Errorf("cannot write: database is locked by another process (MCP server?)")
 	}
 
-	data, err := json.Marshal(entry)
+	// Store metadata only - Content is excluded to save charm cloud storage
+	meta := toEntryMeta(entry)
+	data, err := json.Marshal(meta)
 	if err != nil {
 		return fmt.Errorf("marshal entry: %w", err)
 	}
