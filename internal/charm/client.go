@@ -33,8 +33,9 @@ const (
 // Unlike the previous implementation, it does NOT hold a persistent connection.
 // Each operation opens the database, performs the operation, and closes it.
 type Client struct {
-	dbName   string
-	autoSync bool
+	dbName         string
+	autoSync       bool
+	staleThreshold time.Duration
 }
 
 // NewClient creates a new client.
@@ -45,14 +46,19 @@ func NewClient() (*Client, error) {
 	}
 
 	return &Client{
-		dbName:   DBName,
-		autoSync: true, // Auto-sync enabled for seamless multi-device sync
+		dbName:         DBName,
+		autoSync:       true, // Auto-sync enabled for seamless multi-device sync
+		staleThreshold: kv.DefaultStaleThreshold,
 	}, nil
 }
 
 // DoReadOnly executes a function with read-only database access.
 // Use this for batch read operations that need multiple Gets.
+// Automatically syncs if stale before reading.
 func (c *Client) DoReadOnly(fn func(k *kv.KV) error) error {
+	// Sync if stale before read operations
+	// Ignore errors to allow reads to work even when offline
+	_ = c.SyncIfStale()
 	return kv.DoReadOnly(c.dbName, fn)
 }
 
@@ -79,6 +85,33 @@ func (c *Client) SetAutoSync(enabled bool) {
 func (c *Client) Sync() error {
 	return kv.Do(c.dbName, func(k *kv.KV) error {
 		return k.Sync()
+	})
+}
+
+// LastSyncTime returns the time of the last successful sync.
+func (c *Client) LastSyncTime() (time.Time, error) {
+	var lastSync time.Time
+	err := kv.DoReadOnly(c.dbName, func(k *kv.KV) error {
+		lastSync = k.LastSyncTime()
+		return nil
+	})
+	return lastSync, err
+}
+
+// IsStale checks if the local database is stale based on staleThreshold.
+func (c *Client) IsStale() (bool, error) {
+	var isStale bool
+	err := kv.DoReadOnly(c.dbName, func(k *kv.KV) error {
+		isStale = k.IsStale(c.staleThreshold)
+		return nil
+	})
+	return isStale, err
+}
+
+// SyncIfStale syncs with the server if the local database is stale.
+func (c *Client) SyncIfStale() error {
+	return kv.Do(c.dbName, func(k *kv.KV) error {
+		return k.SyncIfStale(c.staleThreshold)
 	})
 }
 

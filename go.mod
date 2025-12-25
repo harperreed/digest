@@ -2,7 +2,7 @@ module github.com/harper/digest
 
 go 1.24.11
 
-replace github.com/charmbracelet/charm => github.com/2389-research/charm v0.18.0
+replace github.com/charmbracelet/charm => github.com/2389-research/charm v0.19.0 // adds stale sync support
 
 require (
 	github.com/JohannesKaufmann/html-to-markdown/v2 v2.5.0
