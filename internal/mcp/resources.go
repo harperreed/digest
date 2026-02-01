@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/harper/digest/internal/charm"
+	"github.com/harper/digest/internal/storage"
 	"github.com/harper/digest/internal/timeutil"
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -50,7 +50,7 @@ func (s *Server) registerFeedsResource() {
 			MIMEType:    "application/json",
 		},
 		func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-			feeds, err := s.client.ListFeeds()
+			feeds, err := s.store.ListFeeds()
 			if err != nil {
 				return nil, fmt.Errorf("failed to list feeds: %w", err)
 			}
@@ -122,8 +122,8 @@ func (s *Server) registerEntriesUnreadResource() {
 		},
 		func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
 			unreadOnly := true
-			filter := &charm.EntryFilter{UnreadOnly: &unreadOnly}
-			entries, err := s.client.ListEntries(filter)
+			filter := &storage.EntryFilter{UnreadOnly: &unreadOnly}
+			entries, err := s.store.ListEntries(filter)
 			if err != nil {
 				return nil, fmt.Errorf("failed to list unread entries: %w", err)
 			}
@@ -204,8 +204,8 @@ func (s *Server) registerEntriesTodayResource() {
 			// Calculate start of today (midnight local time) - consistent with CLI and timeutil
 			startOfDay := timeutil.StartOfToday()
 
-			filter := &charm.EntryFilter{Since: &startOfDay}
-			entries, err := s.client.ListEntries(filter)
+			filter := &storage.EntryFilter{Since: &startOfDay}
+			entries, err := s.store.ListEntries(filter)
 			if err != nil {
 				return nil, fmt.Errorf("failed to list today's entries: %w", err)
 			}
@@ -353,7 +353,7 @@ type SyncInfo struct {
 
 func (s *Server) calculateStats() (*StatsData, error) {
 	// Get overall stats
-	overallStats, err := s.client.GetOverallStats()
+	overallStats, err := s.store.GetOverallStats()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get overall stats: %w", err)
 	}
@@ -365,7 +365,7 @@ func (s *Server) calculateStats() (*StatsData, error) {
 	}
 
 	// Get per-feed stats
-	feedStats, err := s.client.GetFeedStats()
+	feedStats, err := s.store.GetFeedStats()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get feed stats: %w", err)
 	}

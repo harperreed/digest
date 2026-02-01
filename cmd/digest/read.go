@@ -1,5 +1,5 @@
 // ABOUTME: Read command for viewing article content
-// ABOUTME: Displays full article details with markdown rendering and marks as read
+// ABOUTME: Displays full article details with plain text formatting and marks as read
 
 package main
 
@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/glamour"
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 
@@ -24,17 +23,17 @@ var readCmd = &cobra.Command{
 		noMark, _ := cmd.Flags().GetBool("no-mark")
 
 		// Get entry by ID or prefix
-		entry, err := charmClient.GetEntry(entryRef)
+		entry, err := store.GetEntry(entryRef)
 		if err != nil {
 			// Try prefix match
-			entry, err = charmClient.GetEntryByPrefix(entryRef)
+			entry, err = store.GetEntryByPrefix(entryRef)
 			if err != nil {
 				return fmt.Errorf("entry not found: %s", entryRef)
 			}
 		}
 
 		// Get feed for context
-		feed, err := charmClient.GetFeed(entry.FeedID)
+		feed, err := store.GetFeed(entry.FeedID)
 		if err != nil {
 			return fmt.Errorf("failed to get feed: %w", err)
 		}
@@ -45,7 +44,7 @@ var readCmd = &cobra.Command{
 		cyan := color.New(color.FgCyan).SprintFunc()
 
 		// Display article header
-		fmt.Println(strings.Repeat("─", 60))
+		fmt.Println(strings.Repeat("-", 60))
 
 		// Title
 		title := "Untitled"
@@ -76,22 +75,13 @@ var readCmd = &cobra.Command{
 			fmt.Printf("%s %s\n", faint("Link:"), cyan(*entry.Link))
 		}
 
-		fmt.Println(strings.Repeat("─", 60))
+		fmt.Println(strings.Repeat("-", 60))
 
 		// Content
 		if entry.Content != nil && *entry.Content != "" {
-			// Convert HTML to markdown if needed
+			// Convert HTML to markdown for plain text display
 			markdown := content.ToMarkdown(*entry.Content)
-
-			// Render with glamour for terminal display
-			rendered, err := glamour.Render(markdown, "dark")
-			if err != nil {
-				// Fall back to plain markdown if rendering fails
-				fmt.Printf("%s\n", faint("(markdown rendering unavailable, showing plain text)"))
-				fmt.Printf("\n%s\n", markdown)
-			} else {
-				fmt.Print(rendered)
-			}
+			fmt.Printf("\n%s\n", markdown)
 		} else {
 			fmt.Println("\n(No content available)")
 		}
@@ -100,7 +90,7 @@ var readCmd = &cobra.Command{
 
 		// Mark as read unless --no-mark flag is set
 		if !noMark && !entry.Read {
-			if err := charmClient.MarkEntryRead(entry.ID); err != nil {
+			if err := store.MarkEntryRead(entry.ID); err != nil {
 				return fmt.Errorf("failed to mark entry as read: %w", err)
 			}
 			fmt.Printf("%s\n", faint("Marked as read"))

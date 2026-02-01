@@ -1,5 +1,5 @@
 // ABOUTME: Feed management commands for adding, listing, and removing RSS/Atom feeds
-// ABOUTME: Handles feed CRUD operations and syncs changes to both Charm KV and OPML file
+// ABOUTME: Handles feed CRUD operations and syncs changes to both SQLite and OPML file
 
 package main
 
@@ -8,8 +8,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/harper/digest/internal/charm"
 	"github.com/harper/digest/internal/discover"
+	"github.com/harper/digest/internal/storage"
 )
 
 var feedCmd = &cobra.Command{
@@ -58,20 +58,20 @@ var feedAddCmd = &cobra.Command{
 		}
 
 		// Check if feed already exists
-		existingFeed, err := charmClient.GetFeedByURL(feedURL)
+		existingFeed, err := store.GetFeedByURL(feedURL)
 		if err == nil && existingFeed != nil {
 			return fmt.Errorf("feed already exists: %s", feedURL)
 		}
 
 		// Create new feed
-		feed := charm.NewFeed(feedURL)
+		feed := storage.NewFeed(feedURL)
 		feed.Folder = folder
 		if feedTitle != "" {
 			feed.Title = &feedTitle
 		}
 
-		// Save to Charm KV (auto-syncs to cloud)
-		if err := charmClient.CreateFeed(feed); err != nil {
+		// Save to storage
+		if err := store.CreateFeed(feed); err != nil {
 			return fmt.Errorf("failed to create feed: %w", err)
 		}
 
@@ -81,7 +81,7 @@ var feedAddCmd = &cobra.Command{
 			opmlTitle = feedURL
 		}
 		if err := opmlDoc.AddFeed(feedURL, opmlTitle, folder); err != nil {
-			// Non-fatal: OPML is for import/export, Charm is source of truth
+			// Non-fatal: OPML is for import/export, SQLite is source of truth
 			fmt.Printf("Note: Could not add to OPML: %v\n", err)
 		} else {
 			if err := saveOPML(); err != nil {
@@ -106,7 +106,7 @@ var feedListCmd = &cobra.Command{
 	Short:   "List all feeds",
 	Long:    "List all subscribed feeds with their folders",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		feeds, err := charmClient.ListFeeds()
+		feeds, err := store.ListFeeds()
 		if err != nil {
 			return fmt.Errorf("failed to list feeds: %w", err)
 		}
@@ -144,14 +144,14 @@ var feedRemoveCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		url := args[0]
 
-		// Get feed from Charm
-		feed, err := charmClient.GetFeedByURL(url)
+		// Get feed from storage
+		feed, err := store.GetFeedByURL(url)
 		if err != nil {
 			return fmt.Errorf("feed not found: %s", url)
 		}
 
-		// Delete from Charm (cascade deletes entries, auto-syncs)
-		if err := charmClient.DeleteFeed(feed.ID); err != nil {
+		// Delete from storage (cascade deletes entries)
+		if err := store.DeleteFeed(feed.ID); err != nil {
 			return fmt.Errorf("failed to delete feed: %w", err)
 		}
 
@@ -179,15 +179,15 @@ var feedMoveCmd = &cobra.Command{
 		url := args[0]
 		newFolder := args[1]
 
-		// Get feed from Charm
-		feed, err := charmClient.GetFeedByURL(url)
+		// Get feed from storage
+		feed, err := store.GetFeedByURL(url)
 		if err != nil {
 			return fmt.Errorf("feed not found: %s", url)
 		}
 
 		// Update folder
 		feed.Folder = newFolder
-		if err := charmClient.UpdateFeed(feed); err != nil {
+		if err := store.UpdateFeed(feed); err != nil {
 			return fmt.Errorf("failed to update feed: %w", err)
 		}
 

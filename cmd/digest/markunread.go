@@ -18,10 +18,10 @@ var markUnreadCmd = &cobra.Command{
 		entryRef := args[0]
 
 		// Get entry by ID or prefix
-		entry, err := charmClient.GetEntry(entryRef)
+		entry, err := store.GetEntry(entryRef)
 		if err != nil {
 			// Try prefix match
-			entry, err = charmClient.GetEntryByPrefix(entryRef)
+			entry, err = store.GetEntryByPrefix(entryRef)
 			if err != nil {
 				return fmt.Errorf("entry not found: %s", entryRef)
 			}
@@ -32,7 +32,7 @@ var markUnreadCmd = &cobra.Command{
 			return nil
 		}
 
-		if err := charmClient.MarkEntryUnread(entry.ID); err != nil {
+		if err := store.MarkEntryUnread(entry.ID); err != nil {
 			return fmt.Errorf("failed to mark entry as unread: %w", err)
 		}
 

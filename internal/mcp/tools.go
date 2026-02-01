@@ -10,11 +10,11 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/harper/digest/internal/charm"
 	"github.com/harper/digest/internal/content"
 	"github.com/harper/digest/internal/fetch"
 	"github.com/harper/digest/internal/models"
 	"github.com/harper/digest/internal/parse"
+	"github.com/harper/digest/internal/storage"
 	"github.com/harper/digest/internal/timeutil"
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -385,19 +385,19 @@ func (s *Server) handleListFeeds(_ context.Context, req mcp.CallToolRequest) (*m
 	folders := s.opmlDoc.Folders()
 	s.opmlMu.RUnlock()
 
-	// Get all feeds from charm KV
-	kvFeeds, err := s.client.ListFeeds()
+	// Get all feeds from storage
+	storedFeeds, err := s.store.ListFeeds()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list feeds: %w", err)
 	}
 
 	// Create map for quick lookup
-	kvFeedMap := make(map[string]*models.Feed)
-	for _, feed := range kvFeeds {
-		kvFeedMap[feed.URL] = feed
+	storedFeedMap := make(map[string]*models.Feed)
+	for _, feed := range storedFeeds {
+		storedFeedMap[feed.URL] = feed
 	}
 
-	// Build output by combining OPML and KV data
+	// Build output by combining OPML and storage data
 	feedOutputs := make([]FeedOutput, 0, len(opmlFeeds))
 	for _, opmlFeed := range opmlFeeds {
 		output := FeedOutput{
@@ -405,16 +405,16 @@ func (s *Server) handleListFeeds(_ context.Context, req mcp.CallToolRequest) (*m
 			Folder: opmlFeed.Folder,
 		}
 
-		// Add KV info if available
-		if kvFeed, exists := kvFeedMap[opmlFeed.URL]; exists {
-			output.ID = kvFeed.ID
-			output.Title = kvFeed.Title
-			output.LastFetchedAt = kvFeed.LastFetchedAt
-			output.LastError = kvFeed.LastError
-			output.ErrorCount = kvFeed.ErrorCount
-			output.CreatedAt = kvFeed.CreatedAt
+		// Add storage info if available
+		if storedFeed, exists := storedFeedMap[opmlFeed.URL]; exists {
+			output.ID = storedFeed.ID
+			output.Title = storedFeed.Title
+			output.LastFetchedAt = storedFeed.LastFetchedAt
+			output.LastError = storedFeed.LastError
+			output.ErrorCount = storedFeed.ErrorCount
+			output.CreatedAt = storedFeed.CreatedAt
 		} else {
-			// Feed in OPML but not in KV
+			// Feed in OPML but not in storage
 			title := opmlFeed.Title
 			output.Title = &title
 		}
@@ -455,18 +455,18 @@ func (s *Server) handleAddFeed(_ context.Context, req mcp.CallToolRequest) (*mcp
 	}
 
 	// Check if feed already exists
-	existingFeed, err := s.client.GetFeedByURL(input.URL)
+	existingFeed, err := s.store.GetFeedByURL(input.URL)
 	if err == nil && existingFeed != nil {
 		return nil, fmt.Errorf("feed already exists: %s", input.URL)
 	}
 
-	// Create feed in charm KV
-	feed := charm.NewFeed(input.URL)
+	// Create feed in storage
+	feed := storage.NewFeed(input.URL)
 	if input.Title != nil {
 		feed.Title = input.Title
 	}
 
-	if err := s.client.CreateFeed(feed); err != nil {
+	if err := s.store.CreateFeed(feed); err != nil {
 		return nil, fmt.Errorf("failed to create feed: %w", err)
 	}
 
@@ -517,13 +517,13 @@ func (s *Server) handleRemoveFeed(_ context.Context, req mcp.CallToolRequest) (*
 	}
 
 	// Get feed to get ID
-	feed, err := s.client.GetFeedByURL(input.URL)
+	feed, err := s.store.GetFeedByURL(input.URL)
 	if err != nil {
 		return nil, fmt.Errorf("feed not found: %s", input.URL)
 	}
 
-	// Delete from charm KV (cascade deletes entries)
-	if err := s.client.DeleteFeed(feed.ID); err != nil {
+	// Delete from storage (cascade deletes entries)
+	if err := s.store.DeleteFeed(feed.ID); err != nil {
 		return nil, fmt.Errorf("failed to delete feed: %w", err)
 	}
 
@@ -574,7 +574,7 @@ func (s *Server) handleMoveFeed(_ context.Context, req mcp.CallToolRequest) (*mc
 	}
 
 	// Verify feed exists
-	if _, err := s.client.GetFeedByURL(input.URL); err != nil {
+	if _, err := s.store.GetFeedByURL(input.URL); err != nil {
 		return nil, fmt.Errorf("feed not found: %s", input.URL)
 	}
 
@@ -653,7 +653,7 @@ func (s *Server) handleSyncFeeds(ctx context.Context, req mcp.CallToolRequest) (
 	}
 
 	// Get feeds to sync
-	feeds, err := s.client.ListFeeds()
+	feeds, err := s.store.ListFeeds()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list feeds: %w", err)
 	}
@@ -757,7 +757,7 @@ func (s *Server) handleListEntries(_ context.Context, req mcp.CallToolRequest) (
 	}
 
 	// Build filter and list entries
-	filter := &charm.EntryFilter{
+	filter := &storage.EntryFilter{
 		FeedID:     input.FeedID,
 		UnreadOnly: input.UnreadOnly,
 		Since:      since,
@@ -766,7 +766,7 @@ func (s *Server) handleListEntries(_ context.Context, req mcp.CallToolRequest) (
 		Offset:     input.Offset,
 	}
 
-	entries, err := s.client.ListEntries(filter)
+	entries, err := s.store.ListEntries(filter)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list entries: %w", err)
 	}
@@ -829,17 +829,17 @@ func (s *Server) handleGetEntry(_ context.Context, req mcp.CallToolRequest) (*mc
 	}
 
 	// Get entry by ID or prefix
-	entry, err := s.client.GetEntry(input.EntryID)
+	entry, err := s.store.GetEntry(input.EntryID)
 	if err != nil {
 		// Try prefix match
-		entry, err = s.client.GetEntryByPrefix(input.EntryID)
+		entry, err = s.store.GetEntryByPrefix(input.EntryID)
 		if err != nil {
 			return nil, fmt.Errorf("entry not found: %s", input.EntryID)
 		}
 	}
 
 	// Get feed for context
-	feed, err := s.client.GetFeed(entry.FeedID)
+	feed, err := s.store.GetFeed(entry.FeedID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get feed: %w", err)
 	}
@@ -885,17 +885,17 @@ func (s *Server) handleMarkRead(_ context.Context, req mcp.CallToolRequest) (*mc
 	}
 
 	// Verify entry exists
-	if _, err := s.client.GetEntry(input.EntryID); err != nil {
+	if _, err := s.store.GetEntry(input.EntryID); err != nil {
 		return nil, fmt.Errorf("entry not found: %s", input.EntryID)
 	}
 
 	// Mark as read
-	if err := s.client.MarkEntryRead(input.EntryID); err != nil {
+	if err := s.store.MarkEntryRead(input.EntryID); err != nil {
 		return nil, fmt.Errorf("failed to mark entry as read: %w", err)
 	}
 
 	// Reload entry to get updated read_at
-	entry, err := s.client.GetEntry(input.EntryID)
+	entry, err := s.store.GetEntry(input.EntryID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to reload entry: %w", err)
 	}
@@ -927,17 +927,17 @@ func (s *Server) handleMarkUnread(_ context.Context, req mcp.CallToolRequest) (*
 	}
 
 	// Verify entry exists
-	if _, err := s.client.GetEntry(input.EntryID); err != nil {
+	if _, err := s.store.GetEntry(input.EntryID); err != nil {
 		return nil, fmt.Errorf("entry not found: %s", input.EntryID)
 	}
 
 	// Mark as unread
-	if err := s.client.MarkEntryUnread(input.EntryID); err != nil {
+	if err := s.store.MarkEntryUnread(input.EntryID); err != nil {
 		return nil, fmt.Errorf("failed to mark entry as unread: %w", err)
 	}
 
 	// Reload entry to get updated state
-	entry, err := s.client.GetEntry(input.EntryID)
+	entry, err := s.store.GetEntry(input.EntryID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to reload entry: %w", err)
 	}
@@ -976,7 +976,7 @@ func (s *Server) syncFeed(ctx context.Context, feed *models.Feed, force bool) (i
 	result, err := fetch.Fetch(ctx, feed.URL, etag, lastModified)
 	if err != nil {
 		// Update error state
-		if updateErr := s.client.UpdateFeedError(feed.ID, err.Error()); updateErr != nil {
+		if updateErr := s.store.UpdateFeedError(feed.ID, err.Error()); updateErr != nil {
 			return 0, false, fmt.Errorf("fetch failed (%v) and error update failed: %w", err, updateErr)
 		}
 		return 0, false, err
@@ -991,7 +991,7 @@ func (s *Server) syncFeed(ctx context.Context, feed *models.Feed, force bool) (i
 	parsed, err := parse.Parse(result.Body)
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to parse feed: %v", err)
-		if updateErr := s.client.UpdateFeedError(feed.ID, errMsg); updateErr != nil {
+		if updateErr := s.store.UpdateFeedError(feed.ID, errMsg); updateErr != nil {
 			return 0, false, fmt.Errorf("parse failed (%v) and error update failed: %w", err, updateErr)
 		}
 		return 0, false, fmt.Errorf("failed to parse feed: %w", err)
@@ -1008,7 +1008,7 @@ func (s *Server) syncFeed(ctx context.Context, feed *models.Feed, force bool) (i
 	newCount := 0
 	for _, parsedEntry := range parsed.Entries {
 		// Check if entry already exists
-		exists, err := s.client.EntryExists(feed.ID, parsedEntry.GUID)
+		exists, err := s.store.EntryExists(feed.ID, parsedEntry.GUID)
 		if err != nil {
 			return newCount, false, fmt.Errorf("failed to check entry existence: %w", err)
 		}
@@ -1018,13 +1018,13 @@ func (s *Server) syncFeed(ctx context.Context, feed *models.Feed, force bool) (i
 		}
 
 		// Create new entry
-		entry := charm.NewEntry(feed.ID, parsedEntry.GUID, parsedEntry.Title)
+		entry := storage.NewEntry(feed.ID, parsedEntry.GUID, parsedEntry.Title)
 		entry.Link = &parsedEntry.Link
 		entry.Author = &parsedEntry.Author
 		entry.PublishedAt = parsedEntry.PublishedAt
 		entry.Content = &parsedEntry.Content
 
-		if err := s.client.CreateEntry(entry); err != nil {
+		if err := s.store.CreateEntry(entry); err != nil {
 			return newCount, false, fmt.Errorf("failed to create entry: %w", err)
 		}
 
@@ -1033,13 +1033,13 @@ func (s *Server) syncFeed(ctx context.Context, feed *models.Feed, force bool) (i
 
 	// Update feed fetch state
 	fetchedAt := time.Now()
-	if err := s.client.UpdateFeedFetchState(feed.ID, &result.ETag, &result.LastModified, fetchedAt); err != nil {
+	if err := s.store.UpdateFeedFetchState(feed.ID, &result.ETag, &result.LastModified, fetchedAt); err != nil {
 		return newCount, false, fmt.Errorf("failed to update feed state: %w", err)
 	}
 
 	// If title was updated, persist
 	if titleUpdated {
-		if err := s.client.UpdateFeed(feed); err != nil {
+		if err := s.store.UpdateFeed(feed); err != nil {
 			return newCount, false, fmt.Errorf("failed to update feed title: %w", err)
 		}
 	}
@@ -1060,7 +1060,7 @@ func (s *Server) handleBulkMarkRead(_ context.Context, req mcp.CallToolRequest) 
 	}
 
 	// Mark entries as read
-	count, err := s.client.MarkEntriesReadBefore(cutoff)
+	count, err := s.store.MarkEntriesReadBefore(cutoff)
 	if err != nil {
 		return nil, fmt.Errorf("failed to mark entries as read: %w", err)
 	}

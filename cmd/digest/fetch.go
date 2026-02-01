@@ -11,10 +11,10 @@ import (
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 
-	"github.com/harper/digest/internal/charm"
 	"github.com/harper/digest/internal/fetch"
 	"github.com/harper/digest/internal/models"
 	"github.com/harper/digest/internal/parse"
+	"github.com/harper/digest/internal/storage"
 )
 
 var fetchCmd = &cobra.Command{
@@ -28,8 +28,8 @@ Use --force to ignore cache headers and fetch unconditionally.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		force, _ := cmd.Flags().GetBool("force")
 
-		// Get all feeds from Charm
-		feeds, err := charmClient.ListFeeds()
+		// Get all feeds from storage
+		feeds, err := store.ListFeeds()
 		if err != nil {
 			return fmt.Errorf("failed to list feeds: %w", err)
 		}
@@ -70,19 +70,19 @@ Use --force to ignore cache headers and fetch unconditionally.`,
 
 			newCount, wasCached, err := syncFeed(feed, force)
 			if err != nil {
-				fmt.Printf("%s %s\n", red("✗"), err.Error())
+				fmt.Printf("%s %s\n", red("x"), err.Error())
 				totalErrors++
 				continue
 			}
 
 			if wasCached {
-				fmt.Printf("%s (cached)\n", faint("—"))
+				fmt.Printf("%s (cached)\n", faint("-"))
 				totalCached++
 			} else if newCount > 0 {
-				fmt.Printf("%s %d new\n", green("✓"), newCount)
+				fmt.Printf("%s %d new\n", green("v"), newCount)
 				totalNew += newCount
 			} else {
-				fmt.Printf("%s no new entries\n", green("✓"))
+				fmt.Printf("%s no new entries\n", green("v"))
 			}
 		}
 
@@ -90,13 +90,13 @@ Use --force to ignore cache headers and fetch unconditionally.`,
 		fmt.Println()
 		fmt.Printf("Summary: %d feed(s) synced\n", len(feeds))
 		if totalNew > 0 {
-			fmt.Printf("  %s %d new entries\n", green("✓"), totalNew)
+			fmt.Printf("  %s %d new entries\n", green("v"), totalNew)
 		}
 		if totalCached > 0 {
-			fmt.Printf("  %s %d cached (not modified)\n", faint("—"), totalCached)
+			fmt.Printf("  %s %d cached (not modified)\n", faint("-"), totalCached)
 		}
 		if totalErrors > 0 {
-			fmt.Printf("  %s %d errors\n", red("✗"), totalErrors)
+			fmt.Printf("  %s %d errors\n", red("x"), totalErrors)
 		}
 
 		return nil
@@ -116,7 +116,7 @@ func syncFeed(feed *models.Feed, force bool) (newCount int, wasCached bool, err 
 	result, err := fetch.Fetch(context.Background(), feed.URL, etag, lastModified)
 	if err != nil {
 		// Update error state
-		if updateErr := charmClient.UpdateFeedError(feed.ID, err.Error()); updateErr != nil {
+		if updateErr := store.UpdateFeedError(feed.ID, err.Error()); updateErr != nil {
 			return 0, false, fmt.Errorf("fetch failed (%v) and error update failed: %w", err, updateErr)
 		}
 		return 0, false, err
@@ -131,7 +131,7 @@ func syncFeed(feed *models.Feed, force bool) (newCount int, wasCached bool, err 
 	parsed, err := parse.Parse(result.Body)
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to parse feed: %v", err)
-		if updateErr := charmClient.UpdateFeedError(feed.ID, errMsg); updateErr != nil {
+		if updateErr := store.UpdateFeedError(feed.ID, errMsg); updateErr != nil {
 			return 0, false, fmt.Errorf("parse failed (%v) and error update failed: %w", err, updateErr)
 		}
 		return 0, false, fmt.Errorf("failed to parse feed: %w", err)
@@ -148,7 +148,7 @@ func syncFeed(feed *models.Feed, force bool) (newCount int, wasCached bool, err 
 	newCount = 0
 	for _, parsedEntry := range parsed.Entries {
 		// Check if entry already exists
-		exists, err := charmClient.EntryExists(feed.ID, parsedEntry.GUID)
+		exists, err := store.EntryExists(feed.ID, parsedEntry.GUID)
 		if err != nil {
 			return newCount, false, fmt.Errorf("failed to check entry existence: %w", err)
 		}
@@ -158,13 +158,13 @@ func syncFeed(feed *models.Feed, force bool) (newCount int, wasCached bool, err 
 		}
 
 		// Create new entry
-		entry := charm.NewEntry(feed.ID, parsedEntry.GUID, parsedEntry.Title)
+		entry := storage.NewEntry(feed.ID, parsedEntry.GUID, parsedEntry.Title)
 		entry.Link = &parsedEntry.Link
 		entry.Author = &parsedEntry.Author
 		entry.PublishedAt = parsedEntry.PublishedAt
 		entry.Content = &parsedEntry.Content
 
-		if err := charmClient.CreateEntry(entry); err != nil {
+		if err := store.CreateEntry(entry); err != nil {
 			return newCount, false, fmt.Errorf("failed to create entry: %w", err)
 		}
 
@@ -173,13 +173,13 @@ func syncFeed(feed *models.Feed, force bool) (newCount int, wasCached bool, err 
 
 	// Update feed fetch state
 	fetchedAt := time.Now()
-	if err := charmClient.UpdateFeedFetchState(feed.ID, &result.ETag, &result.LastModified, fetchedAt); err != nil {
+	if err := store.UpdateFeedFetchState(feed.ID, &result.ETag, &result.LastModified, fetchedAt); err != nil {
 		return newCount, false, fmt.Errorf("failed to update feed state: %w", err)
 	}
 
 	// If title was updated, persist
 	if titleUpdated {
-		if err := charmClient.UpdateFeed(feed); err != nil {
+		if err := store.UpdateFeed(feed); err != nil {
 			return newCount, false, fmt.Errorf("failed to update feed title: %w", err)
 		}
 	}

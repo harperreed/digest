@@ -19,7 +19,7 @@ var openCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Get entry by prefix
-		entry, err := charmClient.GetEntryByPrefix(args[0])
+		entry, err := store.GetEntryByPrefix(args[0])
 		if err != nil {
 			return fmt.Errorf("failed to find entry: %w", err)
 		}
@@ -44,7 +44,7 @@ var openCmd = &cobra.Command{
 		}
 
 		// Mark as read
-		if err := charmClient.MarkEntryRead(entry.ID); err != nil {
+		if err := store.MarkEntryRead(entry.ID); err != nil {
 			return fmt.Errorf("failed to mark entry as read: %w", err)
 		}
 
@@ -53,7 +53,7 @@ var openCmd = &cobra.Command{
 		if entry.Title != nil {
 			title = *entry.Title
 		}
-		fmt.Printf("✓ Opened and marked as read: %s\n", title)
+		fmt.Printf("v Opened and marked as read: %s\n", title)
 
 		return nil
 	},

@@ -6,24 +6,24 @@ package mcp
 import (
 	"sync"
 
-	"github.com/harper/digest/internal/charm"
 	"github.com/harper/digest/internal/opml"
+	"github.com/harper/digest/internal/storage"
 	"github.com/mark3labs/mcp-go/server"
 )
 
 // Server wraps the MCP server with digest-specific context
 type Server struct {
 	mcpServer *server.MCPServer
-	client    *charm.Client
+	store     storage.Store
 	opmlDoc   *opml.Document
 	opmlPath  string
 	opmlMu    sync.RWMutex
 }
 
 // NewServer creates a new MCP server instance
-func NewServer(client *charm.Client, opmlDoc *opml.Document, opmlPath string) *Server {
+func NewServer(store storage.Store, opmlDoc *opml.Document, opmlPath string) *Server {
 	s := &Server{
-		client:   client,
+		store:    store,
 		opmlDoc:  opmlDoc,
 		opmlPath: opmlPath,
 	}

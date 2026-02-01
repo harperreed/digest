@@ -117,7 +117,7 @@ func ParseFile(path string) (*Document, error) {
 
 // AllFeeds returns a flat list of all feeds in the document with their folder information
 func (d *Document) AllFeeds() []Feed {
-	var feeds []Feed
+	feeds := make([]Feed, 0, len(d.Outlines))
 	for _, outline := range d.Outlines {
 		feeds = append(feeds, collectFeeds(outline, "")...)
 	}

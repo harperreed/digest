@@ -9,7 +9,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 
-	"github.com/harper/digest/internal/charm"
+	"github.com/harper/digest/internal/storage"
 	"github.com/harper/digest/internal/timeutil"
 )
 
@@ -29,7 +29,7 @@ var listCmd = &cobra.Command{
 		week, _ := cmd.Flags().GetBool("week")
 
 		// Build entry filter
-		filter := &charm.EntryFilter{
+		filter := &storage.EntryFilter{
 			Limit:  &limit,
 			Offset: &offset,
 		}
@@ -46,10 +46,10 @@ var listCmd = &cobra.Command{
 
 		if feedFilter != "" {
 			// Try exact URL match first
-			feed, err := charmClient.GetFeedByURL(feedFilter)
+			feed, err := store.GetFeedByURL(feedFilter)
 			if err != nil {
 				// Try prefix match
-				feed, err = charmClient.GetFeedByPrefix(feedFilter)
+				feed, err = store.GetFeedByPrefix(feedFilter)
 				if err != nil {
 					return fmt.Errorf("failed to find feed: %w", err)
 				}
@@ -64,13 +64,13 @@ var listCmd = &cobra.Command{
 				return fmt.Errorf("no feeds found in category %q", category)
 			}
 
-			// Get feed IDs from Charm
+			// Get feed IDs from storage
 			for _, opmlFeed := range categoryFeeds {
-				charmFeed, err := charmClient.GetFeedByURL(opmlFeed.URL)
+				storageFeed, err := store.GetFeedByURL(opmlFeed.URL)
 				if err != nil {
-					continue // Skip feeds not in Charm
+					continue // Skip feeds not in storage
 				}
-				filter.FeedIDs = append(filter.FeedIDs, charmFeed.ID)
+				filter.FeedIDs = append(filter.FeedIDs, storageFeed.ID)
 			}
 
 			if len(filter.FeedIDs) == 0 {
@@ -93,7 +93,7 @@ var listCmd = &cobra.Command{
 		}
 
 		// List entries
-		entries, err := charmClient.ListEntries(filter)
+		entries, err := store.ListEntries(filter)
 		if err != nil {
 			return fmt.Errorf("failed to list entries: %w", err)
 		}
@@ -118,7 +118,7 @@ var listCmd = &cobra.Command{
 
 			// Read status (checkmark or space)
 			if entry.Read {
-				fmt.Print("✓ ")
+				fmt.Print("v ")
 			} else {
 				fmt.Print("  ")
 			}

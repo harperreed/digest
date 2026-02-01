@@ -1,5 +1,5 @@
 // ABOUTME: Tests for MCP server handlers
-// ABOUTME: Uses real charm client and temp OPML files for isolated testing
+// ABOUTME: Uses SQLite storage and temp OPML files for isolated testing
 
 //go:build !race
 
@@ -9,17 +9,18 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/harper/digest/internal/charm"
 	"github.com/harper/digest/internal/opml"
+	"github.com/harper/digest/internal/storage"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
-// testServer creates a test MCP server with a temp OPML file and test charm client.
-// Returns the server, client, and OPML path (path used internally for OPML writes).
-func testServer(t *testing.T) (*Server, *charm.Client, string) { //nolint:unparam
+// testServer creates a test MCP server with a temp OPML file and test storage.
+// Returns the server, store, and OPML path (path used internally for OPML writes).
+func testServer(t *testing.T) (*Server, storage.Store, string) { //nolint:unparam
 	t.Helper()
 
 	// Create temp OPML file
@@ -52,21 +53,20 @@ func testServer(t *testing.T) (*Server, *charm.Client, string) { //nolint:unpara
 		t.Fatalf("failed to parse OPML: %v", err)
 	}
 
-	// Create test charm client
-	client := newTestCharmClient(t)
+	// Create test storage
+	store := newTestStore(t)
 
 	// Create server
-	s := NewServer(client, opmlDoc, tmpOPML.Name())
+	s := NewServer(store, opmlDoc, tmpOPML.Name())
 
-	return s, client, tmpOPML.Name()
+	return s, store, tmpOPML.Name()
 }
 
-// newTestCharmClient creates a charm.Client for testing
-func newTestCharmClient(t *testing.T) *charm.Client {
+// newTestStore creates a SQLite store for testing
+func newTestStore(t *testing.T) storage.Store {
 	t.Helper()
 
-	dbName := "mcp-server-test-" + t.Name()
-	tmpDir, err := os.MkdirTemp("", "mcp-charm-server-test-*")
+	tmpDir, err := os.MkdirTemp("", "mcp-storage-test-*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
@@ -74,22 +74,26 @@ func newTestCharmClient(t *testing.T) *charm.Client {
 		os.RemoveAll(tmpDir)
 	})
 
-	os.Setenv("CHARM_DATA_DIR", tmpDir)
+	dbPath := filepath.Join(tmpDir, "test.db")
+	store, err := storage.NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
 	t.Cleanup(func() {
-		os.Unsetenv("CHARM_DATA_DIR")
+		store.Close()
 	})
 
-	return charm.NewTestClientWithDBName(dbName, false)
+	return store
 }
 
 func TestHandleListFeeds(t *testing.T) {
-	s, client, _ := testServer(t)
+	s, store, _ := testServer(t)
 
-	// Add a feed to the charm store
-	feed := charm.NewFeed("https://example.com/feed.xml")
+	// Add a feed to the store
+	feed := storage.NewFeed("https://example.com/feed.xml")
 	title := "Example Blog"
 	feed.Title = &title
-	if err := client.CreateFeed(feed); err != nil {
+	if err := store.CreateFeed(feed); err != nil {
 		t.Fatalf("CreateFeed: %v", err)
 	}
 
@@ -118,26 +122,26 @@ func TestHandleListFeeds(t *testing.T) {
 }
 
 func TestHandleListEntries(t *testing.T) {
-	s, client, _ := testServer(t)
+	s, store, _ := testServer(t)
 
 	// Create feed and entries
-	feed := charm.NewFeed("https://example.com/feed.xml")
-	if err := client.CreateFeed(feed); err != nil {
+	feed := storage.NewFeed("https://example.com/feed.xml")
+	if err := store.CreateFeed(feed); err != nil {
 		t.Fatalf("CreateFeed: %v", err)
 	}
 
 	now := time.Now()
-	entry1 := charm.NewEntry(feed.ID, "guid-1", "Entry 1")
+	entry1 := storage.NewEntry(feed.ID, "guid-1", "Entry 1")
 	entry1.PublishedAt = &now
 
-	entry2 := charm.NewEntry(feed.ID, "guid-2", "Entry 2")
+	entry2 := storage.NewEntry(feed.ID, "guid-2", "Entry 2")
 	entry2.PublishedAt = &now
 	entry2.Read = true
 
-	if err := client.CreateEntry(entry1); err != nil {
+	if err := store.CreateEntry(entry1); err != nil {
 		t.Fatalf("CreateEntry: %v", err)
 	}
-	if err := client.CreateEntry(entry2); err != nil {
+	if err := store.CreateEntry(entry2); err != nil {
 		t.Fatalf("CreateEntry: %v", err)
 	}
 
@@ -175,21 +179,21 @@ func TestHandleListEntries(t *testing.T) {
 }
 
 func TestHandleMarkRead(t *testing.T) {
-	s, client, _ := testServer(t)
+	s, store, _ := testServer(t)
 
 	// Create feed and entry
-	feed := charm.NewFeed("https://example.com/feed.xml")
-	if err := client.CreateFeed(feed); err != nil {
+	feed := storage.NewFeed("https://example.com/feed.xml")
+	if err := store.CreateFeed(feed); err != nil {
 		t.Fatalf("CreateFeed: %v", err)
 	}
 
-	entry := charm.NewEntry(feed.ID, "guid-1", "Test Entry")
-	if err := client.CreateEntry(entry); err != nil {
+	entry := storage.NewEntry(feed.ID, "guid-1", "Test Entry")
+	if err := store.CreateEntry(entry); err != nil {
 		t.Fatalf("CreateEntry: %v", err)
 	}
 
 	// Verify initially unread
-	got, _ := client.GetEntry(entry.ID)
+	got, _ := store.GetEntry(entry.ID)
 	if got.Read {
 		t.Error("expected entry to be unread initially")
 	}
@@ -215,26 +219,26 @@ func TestHandleMarkRead(t *testing.T) {
 	}
 
 	// Verify in store
-	got, _ = client.GetEntry(entry.ID)
+	got, _ = store.GetEntry(entry.ID)
 	if !got.Read {
 		t.Error("expected entry to be read in store")
 	}
 }
 
 func TestHandleMarkUnread(t *testing.T) {
-	s, client, _ := testServer(t)
+	s, store, _ := testServer(t)
 
 	// Create feed and read entry
-	feed := charm.NewFeed("https://example.com/feed.xml")
-	if err := client.CreateFeed(feed); err != nil {
+	feed := storage.NewFeed("https://example.com/feed.xml")
+	if err := store.CreateFeed(feed); err != nil {
 		t.Fatalf("CreateFeed: %v", err)
 	}
 
-	entry := charm.NewEntry(feed.ID, "guid-1", "Test Entry")
+	entry := storage.NewEntry(feed.ID, "guid-1", "Test Entry")
 	entry.Read = true
 	now := time.Now()
 	entry.ReadAt = &now
-	if err := client.CreateEntry(entry); err != nil {
+	if err := store.CreateEntry(entry); err != nil {
 		t.Fatalf("CreateEntry: %v", err)
 	}
 
@@ -260,22 +264,22 @@ func TestHandleMarkUnread(t *testing.T) {
 }
 
 func TestHandleGetEntry(t *testing.T) {
-	s, client, _ := testServer(t)
+	s, store, _ := testServer(t)
 
 	// Create feed and entry
-	feed := charm.NewFeed("https://example.com/feed.xml")
+	feed := storage.NewFeed("https://example.com/feed.xml")
 	title := "Test Feed"
 	feed.Title = &title
-	if err := client.CreateFeed(feed); err != nil {
+	if err := store.CreateFeed(feed); err != nil {
 		t.Fatalf("CreateFeed: %v", err)
 	}
 
-	entry := charm.NewEntry(feed.ID, "guid-1", "Test Entry")
+	entry := storage.NewEntry(feed.ID, "guid-1", "Test Entry")
 	content := "<p>Hello <b>world</b></p>"
 	entry.Content = &content
 	link := "https://example.com/post/1"
 	entry.Link = &link
-	if err := client.CreateEntry(entry); err != nil {
+	if err := store.CreateEntry(entry); err != nil {
 		t.Fatalf("CreateEntry: %v", err)
 	}
 
@@ -308,16 +312,16 @@ func TestHandleGetEntry(t *testing.T) {
 }
 
 func TestHandleGetEntryByPrefix(t *testing.T) {
-	s, client, _ := testServer(t)
+	s, store, _ := testServer(t)
 
 	// Create feed and entry
-	feed := charm.NewFeed("https://example.com/feed.xml")
-	if err := client.CreateFeed(feed); err != nil {
+	feed := storage.NewFeed("https://example.com/feed.xml")
+	if err := store.CreateFeed(feed); err != nil {
 		t.Fatalf("CreateFeed: %v", err)
 	}
 
-	entry := charm.NewEntry(feed.ID, "guid-1", "Test Entry")
-	if err := client.CreateEntry(entry); err != nil {
+	entry := storage.NewEntry(feed.ID, "guid-1", "Test Entry")
+	if err := store.CreateEntry(entry); err != nil {
 		t.Fatalf("CreateEntry: %v", err)
 	}
 
@@ -341,11 +345,11 @@ func TestHandleGetEntryByPrefix(t *testing.T) {
 }
 
 func TestHandleBulkMarkRead(t *testing.T) {
-	s, client, _ := testServer(t)
+	s, store, _ := testServer(t)
 
 	// Create feed and entries
-	feed := charm.NewFeed("https://example.com/feed.xml")
-	if err := client.CreateFeed(feed); err != nil {
+	feed := storage.NewFeed("https://example.com/feed.xml")
+	if err := store.CreateFeed(feed); err != nil {
 		t.Fatalf("CreateFeed: %v", err)
 	}
 
@@ -353,22 +357,22 @@ func TestHandleBulkMarkRead(t *testing.T) {
 	yesterday := now.Add(-24 * time.Hour)
 	twoDaysAgo := now.Add(-48 * time.Hour)
 
-	entry1 := charm.NewEntry(feed.ID, "guid-1", "Today")
+	entry1 := storage.NewEntry(feed.ID, "guid-1", "Today")
 	entry1.PublishedAt = &now
 
-	entry2 := charm.NewEntry(feed.ID, "guid-2", "Yesterday")
+	entry2 := storage.NewEntry(feed.ID, "guid-2", "Yesterday")
 	entry2.PublishedAt = &yesterday
 
-	entry3 := charm.NewEntry(feed.ID, "guid-3", "Two days ago")
+	entry3 := storage.NewEntry(feed.ID, "guid-3", "Two days ago")
 	entry3.PublishedAt = &twoDaysAgo
 
-	if err := client.CreateEntry(entry1); err != nil {
+	if err := store.CreateEntry(entry1); err != nil {
 		t.Fatalf("CreateEntry: %v", err)
 	}
-	if err := client.CreateEntry(entry2); err != nil {
+	if err := store.CreateEntry(entry2); err != nil {
 		t.Fatalf("CreateEntry: %v", err)
 	}
-	if err := client.CreateEntry(entry3); err != nil {
+	if err := store.CreateEntry(entry3); err != nil {
 		t.Fatalf("CreateEntry: %v", err)
 	}
 
@@ -420,17 +424,17 @@ func TestHandleAddFeedValidation(t *testing.T) {
 }
 
 func TestHandleRemoveFeed(t *testing.T) {
-	s, client, _ := testServer(t)
+	s, store, _ := testServer(t)
 
 	// Add a feed first
-	feed := charm.NewFeed("https://example.com/feed.xml")
-	if err := client.CreateFeed(feed); err != nil {
+	feed := storage.NewFeed("https://example.com/feed.xml")
+	if err := store.CreateFeed(feed); err != nil {
 		t.Fatalf("CreateFeed: %v", err)
 	}
 
 	// Add some entries
-	entry := charm.NewEntry(feed.ID, "guid-1", "Test Entry")
-	if err := client.CreateEntry(entry); err != nil {
+	entry := storage.NewEntry(feed.ID, "guid-1", "Test Entry")
+	if err := store.CreateEntry(entry); err != nil {
 		t.Fatalf("CreateEntry: %v", err)
 	}
 
@@ -452,13 +456,13 @@ func TestHandleRemoveFeed(t *testing.T) {
 	}
 
 	// Verify feed is gone
-	_, err = client.GetFeed(feed.ID)
+	_, err = store.GetFeed(feed.ID)
 	if err == nil {
 		t.Error("expected error getting deleted feed")
 	}
 
 	// Verify entries are gone (cascade delete)
-	entries, _ := client.ListEntries(nil)
+	entries, _ := store.ListEntries(nil)
 	if len(entries) != 0 {
 		t.Errorf("expected 0 entries after cascade delete, got %d", len(entries))
 	}

@@ -1,5 +1,5 @@
 // ABOUTME: Root Cobra command and global flags
-// ABOUTME: Sets up CLI structure and initializes Charm KV client
+// ABOUTME: Sets up CLI structure and initializes SQLite storage
 
 package main
 
@@ -10,14 +10,14 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/harper/digest/internal/charm"
 	"github.com/harper/digest/internal/opml"
+	"github.com/harper/digest/internal/storage"
 )
 
 var (
-	opmlPath    string
-	opmlDoc     *opml.Document
-	charmClient *charm.Client
+	opmlPath string
+	opmlDoc  *opml.Document
+	store    storage.Store
 )
 
 var rootCmd = &cobra.Command{
@@ -34,18 +34,18 @@ var rootCmd = &cobra.Command{
 RSS/Atom feed tracker for humans and AI agents.
 
 Track feeds, sync content, and expose via MCP for Claude.
-Now with automatic cloud sync via Charm!`,
+Data stored locally in SQLite.`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		// Set default OPML path if not provided
 		if opmlPath == "" {
 			opmlPath = GetDefaultOPMLPath()
 		}
 
-		// Initialize Charm client
+		// Initialize SQLite storage
 		var err error
-		charmClient, err = charm.InitClient()
+		store, err = storage.NewSQLiteStore(storage.GetDefaultDBPath())
 		if err != nil {
-			return fmt.Errorf("failed to initialize charm: %w", err)
+			return fmt.Errorf("failed to initialize storage: %w", err)
 		}
 
 		// Load or create OPML document
@@ -61,9 +61,9 @@ Now with automatic cloud sync via Charm!`,
 		return nil
 	},
 	PersistentPostRunE: func(cmd *cobra.Command, args []string) error {
-		if charmClient != nil {
-			if err := charmClient.Close(); err != nil {
-				return fmt.Errorf("failed to close charm client: %w", err)
+		if store != nil {
+			if err := store.Close(); err != nil {
+				return fmt.Errorf("failed to close storage: %w", err)
 			}
 		}
 		return nil
