@@ -1,1 +1,6 @@
 /digest
+
+# Coverage files
+coverage.html
+coverage.out
+*_cover.out
