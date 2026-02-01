@@ -648,6 +648,267 @@ func TestPrefixTooShort(t *testing.T) {
 	}
 }
 
+func TestUpdateEntry(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+
+	// Create feed
+	feed := models.NewFeed("https://example.com/feed.xml")
+	if err := store.CreateFeed(feed); err != nil {
+		t.Fatalf("CreateFeed failed: %v", err)
+	}
+
+	// Create entry
+	entry := models.NewEntry(feed.ID, "guid-123", "Original Title")
+	if err := store.CreateEntry(entry); err != nil {
+		t.Fatalf("CreateEntry failed: %v", err)
+	}
+
+	// Update entry
+	newTitle := "Updated Title"
+	entry.Title = &newTitle
+	newContent := "Updated content"
+	entry.Content = &newContent
+	if err := store.UpdateEntry(entry); err != nil {
+		t.Fatalf("UpdateEntry failed: %v", err)
+	}
+
+	// Verify update
+	got, err := store.GetEntry(entry.ID)
+	if err != nil {
+		t.Fatalf("GetEntry failed: %v", err)
+	}
+	if got.Title == nil || *got.Title != newTitle {
+		t.Errorf("Title mismatch: got %v, want %q", got.Title, newTitle)
+	}
+	if got.Content == nil || *got.Content != newContent {
+		t.Errorf("Content mismatch: got %v, want %q", got.Content, newContent)
+	}
+}
+
+func TestNewFeedStorage(t *testing.T) {
+	feed := NewFeed("https://example.com/feed.xml")
+	if feed.ID == "" {
+		t.Error("expected ID to be generated")
+	}
+	if feed.URL != "https://example.com/feed.xml" {
+		t.Errorf("expected URL 'https://example.com/feed.xml', got %q", feed.URL)
+	}
+	if feed.CreatedAt.IsZero() {
+		t.Error("expected CreatedAt to be set")
+	}
+}
+
+func TestNewEntryStorage(t *testing.T) {
+	entry := NewEntry("feed-id", "guid-123", "Test Title")
+	if entry.ID == "" {
+		t.Error("expected ID to be generated")
+	}
+	if entry.FeedID != "feed-id" {
+		t.Errorf("expected FeedID 'feed-id', got %q", entry.FeedID)
+	}
+	if entry.GUID != "guid-123" {
+		t.Errorf("expected GUID 'guid-123', got %q", entry.GUID)
+	}
+	if entry.Title == nil || *entry.Title != "Test Title" {
+		t.Errorf("expected Title 'Test Title', got %v", entry.Title)
+	}
+	if entry.CreatedAt.IsZero() {
+		t.Error("expected CreatedAt to be set")
+	}
+	if entry.Read {
+		t.Error("expected Read to be false")
+	}
+}
+
+func TestGetDefaultDBPath(t *testing.T) {
+	path := GetDefaultDBPath()
+	if path == "" {
+		t.Error("expected non-empty default DB path")
+	}
+	if !filepath.IsAbs(path) && path != "." {
+		// Path might be relative if home dir fails, but should be set
+		t.Logf("path is %q", path)
+	}
+}
+
+func TestGetDefaultDBPath_WithXDGDataHome(t *testing.T) {
+	// Save original value
+	original := os.Getenv("XDG_DATA_HOME")
+	defer os.Setenv("XDG_DATA_HOME", original)
+
+	// Set custom XDG_DATA_HOME
+	tmpDir := t.TempDir()
+	os.Setenv("XDG_DATA_HOME", tmpDir)
+
+	path := GetDefaultDBPath()
+	if path == "" {
+		t.Error("expected non-empty path with XDG_DATA_HOME set")
+	}
+}
+
+func TestSortFeeds(t *testing.T) {
+	feed1 := models.NewFeed("https://example1.com/feed.xml")
+	time.Sleep(10 * time.Millisecond)
+	feed2 := models.NewFeed("https://example2.com/feed.xml")
+	time.Sleep(10 * time.Millisecond)
+	feed3 := models.NewFeed("https://example3.com/feed.xml")
+
+	feeds := []*models.Feed{feed1, feed2, feed3}
+	SortFeeds(feeds)
+
+	// Should be sorted newest first
+	if feeds[0].ID != feed3.ID {
+		t.Error("expected feed3 to be first (newest)")
+	}
+	if feeds[2].ID != feed1.ID {
+		t.Error("expected feed1 to be last (oldest)")
+	}
+}
+
+func TestListEntriesUntil(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+
+	// Create feed
+	feed := models.NewFeed("https://example.com/feed.xml")
+	if err := store.CreateFeed(feed); err != nil {
+		t.Fatalf("CreateFeed failed: %v", err)
+	}
+
+	// Create entries
+	now := time.Now()
+	old := now.Add(-48 * time.Hour)
+	recent := now.Add(-1 * time.Hour)
+
+	entry1 := models.NewEntry(feed.ID, "guid-1", "Old Article")
+	entry1.PublishedAt = &old
+	if err := store.CreateEntry(entry1); err != nil {
+		t.Fatalf("CreateEntry failed: %v", err)
+	}
+
+	entry2 := models.NewEntry(feed.ID, "guid-2", "Recent Article")
+	entry2.PublishedAt = &recent
+	if err := store.CreateEntry(entry2); err != nil {
+		t.Fatalf("CreateEntry failed: %v", err)
+	}
+
+	// Test until filter
+	cutoff := now.Add(-24 * time.Hour)
+	filter := &EntryFilter{Until: &cutoff}
+	result, err := store.ListEntries(filter)
+	if err != nil {
+		t.Fatalf("ListEntries until failed: %v", err)
+	}
+	if len(result) != 1 {
+		t.Errorf("expected 1 old entry, got %d", len(result))
+	}
+}
+
+func TestCountUnreadEntriesByFeed(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+
+	// Create feeds
+	feed1 := models.NewFeed("https://example1.com/feed.xml")
+	if err := store.CreateFeed(feed1); err != nil {
+		t.Fatalf("CreateFeed failed: %v", err)
+	}
+
+	feed2 := models.NewFeed("https://example2.com/feed.xml")
+	if err := store.CreateFeed(feed2); err != nil {
+		t.Fatalf("CreateFeed failed: %v", err)
+	}
+
+	// Create entries
+	for i := 0; i < 3; i++ {
+		entry := models.NewEntry(feed1.ID, "guid-1-"+string(rune('0'+i)), "Article")
+		if err := store.CreateEntry(entry); err != nil {
+			t.Fatalf("CreateEntry failed: %v", err)
+		}
+	}
+
+	for i := 0; i < 2; i++ {
+		entry := models.NewEntry(feed2.ID, "guid-2-"+string(rune('0'+i)), "Article")
+		if err := store.CreateEntry(entry); err != nil {
+			t.Fatalf("CreateEntry failed: %v", err)
+		}
+	}
+
+	// Count unread for specific feed
+	count, err := store.CountUnreadEntries(&feed1.ID)
+	if err != nil {
+		t.Fatalf("CountUnreadEntries failed: %v", err)
+	}
+	if count != 3 {
+		t.Errorf("expected 3 unread for feed1, got %d", count)
+	}
+
+	count, err = store.CountUnreadEntries(&feed2.ID)
+	if err != nil {
+		t.Fatalf("CountUnreadEntries failed: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("expected 2 unread for feed2, got %d", count)
+	}
+}
+
+func TestListEntriesMultipleFeedIDs(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+
+	// Create feeds
+	feed1 := models.NewFeed("https://example1.com/feed.xml")
+	if err := store.CreateFeed(feed1); err != nil {
+		t.Fatalf("CreateFeed failed: %v", err)
+	}
+
+	feed2 := models.NewFeed("https://example2.com/feed.xml")
+	if err := store.CreateFeed(feed2); err != nil {
+		t.Fatalf("CreateFeed failed: %v", err)
+	}
+
+	feed3 := models.NewFeed("https://example3.com/feed.xml")
+	if err := store.CreateFeed(feed3); err != nil {
+		t.Fatalf("CreateFeed failed: %v", err)
+	}
+
+	// Create entries
+	entry1 := models.NewEntry(feed1.ID, "guid-1", "Article 1")
+	if err := store.CreateEntry(entry1); err != nil {
+		t.Fatalf("CreateEntry failed: %v", err)
+	}
+
+	entry2 := models.NewEntry(feed2.ID, "guid-2", "Article 2")
+	if err := store.CreateEntry(entry2); err != nil {
+		t.Fatalf("CreateEntry failed: %v", err)
+	}
+
+	entry3 := models.NewEntry(feed3.ID, "guid-3", "Article 3")
+	if err := store.CreateEntry(entry3); err != nil {
+		t.Fatalf("CreateEntry failed: %v", err)
+	}
+
+	// Filter by multiple feed IDs
+	filter := &EntryFilter{FeedIDs: []string{feed1.ID, feed2.ID}}
+	result, err := store.ListEntries(filter)
+	if err != nil {
+		t.Fatalf("ListEntries with FeedIDs failed: %v", err)
+	}
+	if len(result) != 2 {
+		t.Errorf("expected 2 entries for 2 feeds, got %d", len(result))
+	}
+}
+
+func TestBoolToInt(t *testing.T) {
+	if boolToInt(true) != 1 {
+		t.Error("boolToInt(true) should be 1")
+	}
+	if boolToInt(false) != 0 {
+		t.Error("boolToInt(false) should be 0")
+	}
+}
+
 func newTestStore(t *testing.T) *SQLiteStore {
 	t.Helper()
 	tmpDir := t.TempDir()

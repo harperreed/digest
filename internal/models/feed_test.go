@@ -149,3 +149,234 @@ func TestEntry_MarkUnread(t *testing.T) {
 		t.Errorf("expected ReadAt to be nil after MarkUnread, got %v", entry.ReadAt)
 	}
 }
+
+func TestFeed_GetTitle(t *testing.T) {
+	tests := []struct {
+		name     string
+		title    *string
+		expected string
+	}{
+		{
+			name:     "nil title",
+			title:    nil,
+			expected: DefaultFeedTitle,
+		},
+		{
+			name:     "empty title",
+			title:    stringPtr(""),
+			expected: DefaultFeedTitle,
+		},
+		{
+			name:     "valid title",
+			title:    stringPtr("My Feed"),
+			expected: "My Feed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			feed := NewFeed("https://example.com/feed.xml")
+			feed.Title = tt.title
+
+			got := feed.GetTitle()
+			if got != tt.expected {
+				t.Errorf("GetTitle() = %q, want %q", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestFeed_GetDisplayName(t *testing.T) {
+	tests := []struct {
+		name     string
+		title    *string
+		url      string
+		expected string
+	}{
+		{
+			name:     "nil title returns URL",
+			title:    nil,
+			url:      "https://example.com/feed.xml",
+			expected: "https://example.com/feed.xml",
+		},
+		{
+			name:     "empty title returns URL",
+			title:    stringPtr(""),
+			url:      "https://example.com/feed.xml",
+			expected: "https://example.com/feed.xml",
+		},
+		{
+			name:     "valid title returns title",
+			title:    stringPtr("My Feed"),
+			url:      "https://example.com/feed.xml",
+			expected: "My Feed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			feed := NewFeed(tt.url)
+			feed.Title = tt.title
+
+			got := feed.GetDisplayName()
+			if got != tt.expected {
+				t.Errorf("GetDisplayName() = %q, want %q", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestValidateFeedURL(t *testing.T) {
+	tests := []struct {
+		name    string
+		url     string
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name:    "valid https URL",
+			url:     "https://example.com/feed.xml",
+			wantErr: false,
+		},
+		{
+			name:    "valid http URL",
+			url:     "http://example.com/feed.xml",
+			wantErr: false,
+		},
+		{
+			name:    "ftp scheme not allowed",
+			url:     "ftp://example.com/feed.xml",
+			wantErr: true,
+			errMsg:  "URL must use http or https scheme",
+		},
+		{
+			name:    "file scheme not allowed",
+			url:     "file:///feed.xml",
+			wantErr: true,
+			errMsg:  "URL must use http or https scheme",
+		},
+		{
+			name:    "missing host",
+			url:     "https:///feed.xml",
+			wantErr: true,
+			errMsg:  "URL must have a host",
+		},
+		{
+			name:    "invalid URL format",
+			url:     "://invalid",
+			wantErr: true,
+			errMsg:  "invalid URL",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := ValidateFeedURL(tt.url)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateFeedURL(%q) error = %v, wantErr %v", tt.url, err, tt.wantErr)
+				return
+			}
+			if err != nil && tt.errMsg != "" {
+				if !contains(err.Error(), tt.errMsg) {
+					t.Errorf("ValidateFeedURL(%q) error = %v, want error containing %q", tt.url, err, tt.errMsg)
+				}
+			}
+			if err == nil && result == nil {
+				t.Errorf("ValidateFeedURL(%q) returned nil result without error", tt.url)
+			}
+		})
+	}
+}
+
+func TestFeed_SetCacheHeaders_Empty(t *testing.T) {
+	feed := NewFeed("https://example.com/feed.xml")
+
+	// Set empty values should not update
+	feed.SetCacheHeaders("", "")
+
+	if feed.ETag != nil {
+		t.Errorf("expected ETag to be nil with empty string, got %v", feed.ETag)
+	}
+	if feed.LastModified != nil {
+		t.Errorf("expected LastModified to be nil with empty string, got %v", feed.LastModified)
+	}
+}
+
+func TestFeed_SetCacheHeaders_Partial(t *testing.T) {
+	feed := NewFeed("https://example.com/feed.xml")
+
+	// Set only etag
+	feed.SetCacheHeaders("etag-value", "")
+
+	if feed.ETag == nil || *feed.ETag != "etag-value" {
+		t.Errorf("expected ETag to be 'etag-value', got %v", feed.ETag)
+	}
+	if feed.LastModified != nil {
+		t.Errorf("expected LastModified to be nil, got %v", feed.LastModified)
+	}
+
+	// Set only lastModified on a new feed
+	feed2 := NewFeed("https://example.com/feed2.xml")
+	feed2.SetCacheHeaders("", "last-modified-value")
+
+	if feed2.ETag != nil {
+		t.Errorf("expected ETag to be nil, got %v", feed2.ETag)
+	}
+	if feed2.LastModified == nil || *feed2.LastModified != "last-modified-value" {
+		t.Errorf("expected LastModified to be 'last-modified-value', got %v", feed2.LastModified)
+	}
+}
+
+func TestEntry_GetTitle(t *testing.T) {
+	tests := []struct {
+		name     string
+		title    *string
+		expected string
+	}{
+		{
+			name:     "nil title",
+			title:    nil,
+			expected: DefaultEntryTitle,
+		},
+		{
+			name:     "empty title",
+			title:    stringPtr(""),
+			expected: DefaultEntryTitle,
+		},
+		{
+			name:     "valid title",
+			title:    stringPtr("My Entry"),
+			expected: "My Entry",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			entry := NewEntry("feed-123", "guid-456", "Original")
+			entry.Title = tt.title
+
+			got := entry.GetTitle()
+			if got != tt.expected {
+				t.Errorf("GetTitle() = %q, want %q", got, tt.expected)
+			}
+		})
+	}
+}
+
+// Helper functions for tests
+func stringPtr(s string) *string {
+	return &s
+}
+
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsHelper(s, substr))
+}
+
+func containsHelper(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}

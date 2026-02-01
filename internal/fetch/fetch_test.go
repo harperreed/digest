@@ -376,3 +376,62 @@ func TestFetch_UnexpectedContentType(t *testing.T) {
 		t.Errorf("expected ETag '\"json123\"', got %q", result.ETag)
 	}
 }
+
+func TestFetch_InvalidURL(t *testing.T) {
+	// Invalid URL should return error
+	_, err := fetch.Fetch(context.Background(), "://invalid-url", nil, nil)
+	if err == nil {
+		t.Error("expected error for invalid URL")
+	}
+}
+
+func TestFetch_EmptyEtagAndLastModified(t *testing.T) {
+	// Test with empty string pointers (should not set headers)
+	emptyStr := ""
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Verify no conditional headers were sent
+		if inm := r.Header.Get("If-None-Match"); inm != "" {
+			t.Errorf("expected no If-None-Match, got %q", inm)
+		}
+		if ims := r.Header.Get("If-Modified-Since"); ims != "" {
+			t.Errorf("expected no If-Modified-Since, got %q", ims)
+		}
+
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("<rss>test</rss>"))
+	}))
+	defer server.Close()
+
+	result, err := fetch.Fetch(context.Background(), server.URL, &emptyStr, &emptyStr)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.NotModified {
+		t.Error("expected NotModified=false")
+	}
+}
+
+func TestResultStruct(t *testing.T) {
+	// Test Result struct fields
+	result := fetch.Result{
+		Body:         []byte("test"),
+		ETag:         "etag",
+		LastModified: "modified",
+		NotModified:  true,
+	}
+
+	if string(result.Body) != "test" {
+		t.Errorf("expected Body 'test', got %q", string(result.Body))
+	}
+	if result.ETag != "etag" {
+		t.Errorf("expected ETag 'etag', got %q", result.ETag)
+	}
+	if result.LastModified != "modified" {
+		t.Errorf("expected LastModified 'modified', got %q", result.LastModified)
+	}
+	if !result.NotModified {
+		t.Error("expected NotModified true")
+	}
+}
