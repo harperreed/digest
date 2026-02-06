@@ -6,6 +6,7 @@ require (
 	github.com/JohannesKaufmann/html-to-markdown/v2 v2.5.0
 	github.com/fatih/color v1.18.0
 	github.com/google/uuid v1.6.0
+	github.com/harper/suite/mdstore v0.0.0
 	github.com/mark3labs/mcp-go v0.43.2
 	github.com/mmcdole/gofeed v1.3.0
 	github.com/spf13/cobra v1.10.1
@@ -14,6 +15,8 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.41.0
 )
+
+replace github.com/harper/suite/mdstore => ../mdstore
 
 require (
 	github.com/JohannesKaufmann/dom v0.2.0 // indirect

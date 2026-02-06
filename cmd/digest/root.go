@@ -1,5 +1,5 @@
 // ABOUTME: Root Cobra command and global flags
-// ABOUTME: Sets up CLI structure and initializes SQLite storage
+// ABOUTME: Sets up CLI structure and initializes storage via config
 
 package main
 
@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/harper/digest/internal/config"
 	"github.com/harper/digest/internal/opml"
 	"github.com/harper/digest/internal/storage"
 )
@@ -34,16 +35,25 @@ var rootCmd = &cobra.Command{
 RSS/Atom feed tracker for humans and AI agents.
 
 Track feeds, sync content, and expose via MCP for Claude.
-Data stored locally in SQLite.`,
+Data stored locally. Configure backend via config.json.`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		// Skip storage init for migrate command (it manages its own storage)
+		if cmd.Name() == "migrate" {
+			return nil
+		}
+
 		// Set default OPML path if not provided
 		if opmlPath == "" {
 			opmlPath = GetDefaultOPMLPath()
 		}
 
-		// Initialize SQLite storage
-		var err error
-		store, err = storage.NewSQLiteStore(storage.GetDefaultDBPath())
+		// Load config and open storage via configured backend
+		cfg, err := config.Load()
+		if err != nil {
+			return fmt.Errorf("failed to load config: %w", err)
+		}
+
+		store, err = cfg.OpenStorage()
 		if err != nil {
 			return fmt.Errorf("failed to initialize storage: %w", err)
 		}
