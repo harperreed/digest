@@ -37,8 +37,9 @@ RSS/Atom feed tracker for humans and AI agents.
 Track feeds, sync content, and expose via MCP for Claude.
 Data stored locally. Configure backend via config.json.`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		// Skip storage init for migrate command (it manages its own storage)
-		if cmd.Name() == "migrate" || cmd.Name() == "setup" {
+		// Skip storage init for commands that don't need it
+		switch cmd.Name() {
+		case "setup", "migrate", "version", "help", "completion":
 			return nil
 		}
 

@@ -77,19 +77,25 @@ func (m SetupModel) Init() tea.Cmd {
 
 // Update implements tea.Model.
 func (m SetupModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	keyMsg, ok := msg.(tea.KeyMsg)
-	if !ok {
-		return m, nil
-	}
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.Type {
+		case tea.KeyCtrlC, tea.KeyEscape:
+			m.quitting = true
+			return m, tea.Quit
+		}
 
-	switch keyMsg.Type {
-	case tea.KeyCtrlC, tea.KeyEscape:
-		m.quitting = true
-		return m, tea.Quit
-	}
-
-	if m.step == StepBackend || m.step == StepDataDir {
-		return m.updateInput(keyMsg)
+		if m.step == StepBackend || m.step == StepDataDir {
+			return m.updateInput(msg)
+		}
+	default:
+		// Forward other messages (e.g. cursor blink) to the active input
+		if m.step == StepBackend || m.step == StepDataDir {
+			idx := int(m.step)
+			var cmd tea.Cmd
+			m.inputs[idx], cmd = m.inputs[idx].Update(msg)
+			return m, cmd
+		}
 	}
 
 	return m, nil
@@ -172,7 +178,7 @@ func (m SetupModel) View() string {
 		b.WriteString("\n")
 
 	case StepDone:
-		b.WriteString(successStyle.Render("Configuration saved!"))
+		b.WriteString(successStyle.Render("Setup complete!"))
 		b.WriteString("\n\n")
 		b.WriteString(fmt.Sprintf("  Backend:        %s\n", m.inputs[0].Value()))
 		b.WriteString(fmt.Sprintf("  Data directory:  %s\n", m.inputs[1].Value()))
