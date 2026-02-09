@@ -50,6 +50,7 @@ func TestGetConfigPathWithoutXDGConfigHome(t *testing.T) {
 func TestLoadNonExistent(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	t.Setenv("XDG_DATA_HOME", tmpDir)
 
 	cfg, err := Load()
 	if err != nil {
@@ -57,6 +58,15 @@ func TestLoadNonExistent(t *testing.T) {
 	}
 	if cfg == nil {
 		t.Fatal("Load returned nil config")
+	}
+	if cfg.Backend != "markdown" {
+		t.Errorf("expected default backend 'markdown' for new user, got %q", cfg.Backend)
+	}
+
+	// Verify the config file was auto-created
+	configPath := GetConfigPath()
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		t.Error("expected config file to be auto-created on first run")
 	}
 }
 
@@ -354,5 +364,59 @@ func TestSaveToUnwritableDirectory(t *testing.T) {
 
 	if err == nil {
 		t.Error("Expected error when saving to unwritable directory")
+	}
+}
+
+func TestLoadMissingConfig_ExistingSQLiteUser(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	t.Setenv("XDG_DATA_HOME", tmpDir)
+
+	// Create fake digest.db at the expected data directory
+	dataDir := filepath.Join(tmpDir, "digest")
+	if err := os.MkdirAll(dataDir, 0750); err != nil {
+		t.Fatalf("failed to create data dir: %v", err)
+	}
+	dbPath := filepath.Join(dataDir, "digest.db")
+	if err := os.WriteFile(dbPath, []byte("fake db"), 0600); err != nil {
+		t.Fatalf("failed to create fake db: %v", err)
+	}
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if cfg.Backend != "sqlite" {
+		t.Errorf("expected backend 'sqlite' for existing SQLite user, got %q", cfg.Backend)
+	}
+}
+
+func TestLoadAutoCreatesValidConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	t.Setenv("XDG_DATA_HOME", tmpDir)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("Load returned nil config")
+	}
+
+	// Read the auto-created config file and validate its contents
+	configPath := GetConfigPath()
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("failed to read auto-created config: %v", err)
+	}
+
+	var raw map[string]interface{}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("auto-created config is not valid JSON: %v", err)
+	}
+
+	if raw["backend"] != "markdown" {
+		t.Errorf("expected auto-created config backend 'markdown', got %v", raw["backend"])
 	}
 }
