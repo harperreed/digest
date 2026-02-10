@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/harper/suite/mdstore"
+	"github.com/harperreed/mdstore"
 	"gopkg.in/yaml.v3"
 
 	"github.com/harper/digest/internal/models"

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/harper/suite/mdstore"
+	"github.com/harperreed/mdstore"
 
 	"github.com/harper/digest/internal/models"
 )

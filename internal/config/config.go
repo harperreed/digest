@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	"github.com/harper/digest/internal/storage"
-	"github.com/harper/suite/mdstore"
+	"github.com/harperreed/mdstore"
 )
 
 // Config stores digest configuration.
