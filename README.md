@@ -8,15 +8,20 @@ A fast, lightweight RSS/Atom feed reader with both CLI and MCP (Model Context Pr
 - **Add feeds** with optional folder/category organization
 - **Remove feeds** (cascades to delete all entries)
 - **Move feeds** between folders for reorganization
-- **Auto-discover** feed URLs from website URLs
+- **Auto-discover** feed URLs from website URLs (built into `feed add`)
 - **OPML import/export** for feed subscriptions
 
 ### Entry Tracking
-- **Sync feeds** with HTTP caching (ETag, Last-Modified) for efficiency
+- **Fetch feeds** with HTTP caching (ETag, Last-Modified) for efficiency
 - **List entries** with filtering by feed, category, read status, and date
 - **Smart date filters**: `today`, `yesterday`, `week`, `month`
-- **Read articles** with beautiful markdown rendering (HTML auto-converted)
+- **Read articles** with HTML-to-markdown conversion
 - **Mark as read/unread** - individual entries or bulk by date
+
+### Storage Backends
+- **SQLite** - fast, full-featured with FTS5 full-text search
+- **Markdown** - human-readable file-based storage via mdstore
+- Configurable via `digest setup` interactive wizard
 
 ### MCP Server
 Full MCP integration for AI agents to manage feeds:
@@ -78,12 +83,13 @@ make build
 ## CLI Usage
 
 ```bash
-# Add a feed
-digest feed add https://example.com/feed.xml
-digest feed add https://example.com/feed.xml --folder "Tech"
+# First-time setup (choose storage backend and data directory)
+digest setup
 
-# Discover feed from website
-digest feed discover https://example.com
+# Add a feed (auto-discovers feed URL from HTML pages)
+digest feed add https://example.com/feed.xml
+digest feed add https://example.com --folder "Tech"
+digest feed add https://example.com --title "My Blog" --no-discover
 
 # List feeds
 digest feed list
@@ -91,21 +97,48 @@ digest feed list
 # Move feed to category
 digest feed move https://example.com/feed.xml "News"
 
-# Sync all feeds
-digest sync
+# Remove a feed
+digest feed remove https://example.com/feed.xml
+
+# Manage folders
+digest folder add "Tech"
+digest folder list
+
+# Fetch new entries from all feeds
+digest fetch
+digest fetch --force              # Ignore cache, force re-fetch
+digest fetch https://example.com  # Fetch single feed
 
 # List entries
-digest list                    # All unread entries
+digest list                    # Unread entries (default limit: 20)
 digest list --all              # Include read entries
 digest list --today            # Today's entries
+digest list --yesterday        # Yesterday's entries
+digest list --week             # This week's entries
 digest list --category "Tech"  # Entries from Tech folder
+digest list --feed <url>       # Entries from a specific feed
 
-# Read an article (supports ID prefix)
+# Read an article (supports ID prefix matching)
 digest read abc12345
+digest read abc12345 --no-mark    # Read without marking as read
+
+# Open article link in browser
+digest open abc12345
 
 # Mark as read
 digest mark-read abc12345              # Single entry
 digest mark-read --before yesterday    # Bulk mark
+
+# Mark as unread
+digest mark-unread abc12345
+
+# Export data
+digest export                      # OPML to stdout
+digest export --format yaml        # Full YAML export
+digest export --format markdown    # Markdown export
+
+# Migrate between storage backends
+digest migrate
 ```
 
 ## MCP Server Usage
@@ -143,8 +176,9 @@ bulk_mark_read { "before": "week" }
 
 ## Data Storage
 
-- **Database**: `~/.config/digest/digest.db` (SQLite)
-- **Subscriptions**: `~/.config/digest/feeds.opml` (OPML)
+- **Config**: `~/.config/digest/config.json`
+- **Data directory**: `~/.local/share/digest/` (respects `XDG_DATA_HOME`)
+- **Subscriptions**: `~/.local/share/digest/feeds.opml` (OPML)
 
 ## Development
 
@@ -152,11 +186,11 @@ bulk_mark_read { "before": "week" }
 # Run tests
 make test
 
-# Run linter
-make lint
-
 # Build
 make build
+
+# Install locally
+make install
 
 # Run MCP server
 ./digest mcp

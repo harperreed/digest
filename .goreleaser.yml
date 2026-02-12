@@ -5,8 +5,7 @@ version: 2
 before:
   hooks:
     - go mod tidy
-    # Skip charm and mcp tests in CI - they require SSH auth to charm server
-    - sh -c "go test $(go list ./... | grep -v -e /internal/charm -e /internal/mcp)"
+    - go test ./...
 
 builds:
   - id: digest
