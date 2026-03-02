@@ -31,7 +31,7 @@ func SyncFeed(ctx context.Context, store storage.Store, feed *models.Feed, force
 	}
 
 	// Fetch the feed
-	result, err := fetch.Fetch(ctx, feed.URL, etag, lastModified)
+	result, err := fetch.Fetch(ctx, feed.URL, etag, lastModified, false)
 	if err != nil {
 		errMsg := err.Error()
 		if updateErr := store.UpdateFeedError(feed.ID, errMsg); updateErr != nil {

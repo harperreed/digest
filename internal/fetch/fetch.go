@@ -42,18 +42,20 @@ func isPrivateIP(ip net.IP) bool {
 // Returns NotModified=true for 304 responses.
 // Returns error for non-200/304 status codes.
 // Includes SSRF protection by blocking private IP ranges and DoS protection via response size limit.
-func Fetch(ctx context.Context, urlStr string, etag, lastModified *string) (*Result, error) {
+func Fetch(ctx context.Context, urlStr string, etag, lastModified *string, allowLocalNetwork bool) (*Result, error) {
 	// Parse URL for SSRF protection
 	parsedURL, err := url.Parse(urlStr)
 	if err != nil {
 		return nil, fmt.Errorf("invalid URL: %w", err)
 	}
 
-	// SSRF protection: block private IP ranges
-	if ips, err := net.LookupIP(parsedURL.Hostname()); err == nil {
-		for _, ip := range ips {
-			if isPrivateIP(ip) {
-				return nil, fmt.Errorf("access to private IP ranges is not allowed")
+	// SSRF protection: block private IP ranges (unless explicitly allowed)
+	if !allowLocalNetwork {
+		if ips, err := net.LookupIP(parsedURL.Hostname()); err == nil {
+			for _, ip := range ips {
+				if isPrivateIP(ip) {
+					return nil, fmt.Errorf("access to private IP ranges is not allowed")
+				}
 			}
 		}
 	}

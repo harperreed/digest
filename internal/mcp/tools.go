@@ -973,7 +973,7 @@ func (s *Server) syncFeed(ctx context.Context, feed *models.Feed, force bool) (i
 	}
 
 	// Fetch the feed
-	result, err := fetch.Fetch(ctx, feed.URL, etag, lastModified)
+	result, err := fetch.Fetch(ctx, feed.URL, etag, lastModified, false)
 	if err != nil {
 		// Update error state
 		if updateErr := s.store.UpdateFeedError(feed.ID, err.Error()); updateErr != nil {

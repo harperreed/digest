@@ -96,7 +96,7 @@ func Discover(inputURL string) (*DiscoveredFeed, error) {
 // Returns the feed if successful, or nil if the content is not a valid feed.
 // Also returns the raw body for use in HTML parsing if it's not a feed.
 func tryDirectFeed(feedURL string) (*DiscoveredFeed, []byte, error) {
-	result, err := fetch.Fetch(context.Background(), feedURL, nil, nil)
+	result, err := fetch.Fetch(context.Background(), feedURL, nil, nil, false)
 	if err != nil {
 		return nil, nil, err
 	}

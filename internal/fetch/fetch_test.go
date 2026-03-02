@@ -27,7 +27,7 @@ func TestFetch_Fresh(t *testing.T) {
 	}))
 	defer server.Close()
 
-	result, err := fetch.Fetch(context.Background(), server.URL, nil, nil)
+	result, err := fetch.Fetch(context.Background(), server.URL, nil, nil, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestFetch_Cached(t *testing.T) {
 	}))
 	defer server.Close()
 
-	result, err := fetch.Fetch(context.Background(), server.URL, &etag, nil)
+	result, err := fetch.Fetch(context.Background(), server.URL, &etag, nil, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestFetch_Error(t *testing.T) {
 	}))
 	defer server.Close()
 
-	result, err := fetch.Fetch(context.Background(), server.URL, nil, nil)
+	result, err := fetch.Fetch(context.Background(), server.URL, nil, nil, false)
 	if err == nil {
 		t.Fatal("expected error for 404 response, got nil")
 	}
@@ -107,7 +107,7 @@ func TestFetch_MalformedETag(t *testing.T) {
 	}))
 	defer server.Close()
 
-	result, err := fetch.Fetch(context.Background(), server.URL, nil, nil)
+	result, err := fetch.Fetch(context.Background(), server.URL, nil, nil, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestFetch_EmptyETag(t *testing.T) {
 	}))
 	defer server.Close()
 
-	result, err := fetch.Fetch(context.Background(), server.URL, nil, nil)
+	result, err := fetch.Fetch(context.Background(), server.URL, nil, nil, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -154,7 +154,7 @@ func TestFetch_EmptyLastModified(t *testing.T) {
 	}))
 	defer server.Close()
 
-	result, err := fetch.Fetch(context.Background(), server.URL, nil, nil)
+	result, err := fetch.Fetch(context.Background(), server.URL, nil, nil, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -182,7 +182,7 @@ func TestFetch_LargeResponseBody(t *testing.T) {
 	}))
 	defer server.Close()
 
-	result, err := fetch.Fetch(context.Background(), server.URL, nil, nil)
+	result, err := fetch.Fetch(context.Background(), server.URL, nil, nil, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -216,7 +216,7 @@ func TestFetch_304WithCachingHeaders(t *testing.T) {
 	}))
 	defer server.Close()
 
-	result, err := fetch.Fetch(context.Background(), server.URL, &etag, &lastModified)
+	result, err := fetch.Fetch(context.Background(), server.URL, &etag, &lastModified, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -238,7 +238,7 @@ func TestFetch_400BadRequest(t *testing.T) {
 	}))
 	defer server.Close()
 
-	result, err := fetch.Fetch(context.Background(), server.URL, nil, nil)
+	result, err := fetch.Fetch(context.Background(), server.URL, nil, nil, false)
 	if err == nil {
 		t.Fatal("expected error for 400 response, got nil")
 	}
@@ -256,7 +256,7 @@ func TestFetch_403Forbidden(t *testing.T) {
 	}))
 	defer server.Close()
 
-	result, err := fetch.Fetch(context.Background(), server.URL, nil, nil)
+	result, err := fetch.Fetch(context.Background(), server.URL, nil, nil, false)
 	if err == nil {
 		t.Fatal("expected error for 403 response, got nil")
 	}
@@ -274,7 +274,7 @@ func TestFetch_500InternalServerError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	result, err := fetch.Fetch(context.Background(), server.URL, nil, nil)
+	result, err := fetch.Fetch(context.Background(), server.URL, nil, nil, false)
 	if err == nil {
 		t.Fatal("expected error for 500 response, got nil")
 	}
@@ -292,7 +292,7 @@ func TestFetch_502BadGateway(t *testing.T) {
 	}))
 	defer server.Close()
 
-	result, err := fetch.Fetch(context.Background(), server.URL, nil, nil)
+	result, err := fetch.Fetch(context.Background(), server.URL, nil, nil, false)
 	if err == nil {
 		t.Fatal("expected error for 502 response, got nil")
 	}
@@ -310,7 +310,7 @@ func TestFetch_503ServiceUnavailable(t *testing.T) {
 	}))
 	defer server.Close()
 
-	result, err := fetch.Fetch(context.Background(), server.URL, nil, nil)
+	result, err := fetch.Fetch(context.Background(), server.URL, nil, nil, false)
 	if err == nil {
 		t.Fatal("expected error for 503 response, got nil")
 	}
@@ -331,7 +331,7 @@ func TestFetch_EmptyResponseBody(t *testing.T) {
 	}))
 	defer server.Close()
 
-	result, err := fetch.Fetch(context.Background(), server.URL, nil, nil)
+	result, err := fetch.Fetch(context.Background(), server.URL, nil, nil, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -359,7 +359,7 @@ func TestFetch_UnexpectedContentType(t *testing.T) {
 	}))
 	defer server.Close()
 
-	result, err := fetch.Fetch(context.Background(), server.URL, nil, nil)
+	result, err := fetch.Fetch(context.Background(), server.URL, nil, nil, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -379,7 +379,7 @@ func TestFetch_UnexpectedContentType(t *testing.T) {
 
 func TestFetch_InvalidURL(t *testing.T) {
 	// Invalid URL should return error
-	_, err := fetch.Fetch(context.Background(), "://invalid-url", nil, nil)
+	_, err := fetch.Fetch(context.Background(), "://invalid-url", nil, nil, false)
 	if err == nil {
 		t.Error("expected error for invalid URL")
 	}
@@ -403,13 +403,37 @@ func TestFetch_EmptyEtagAndLastModified(t *testing.T) {
 	}))
 	defer server.Close()
 
-	result, err := fetch.Fetch(context.Background(), server.URL, &emptyStr, &emptyStr)
+	result, err := fetch.Fetch(context.Background(), server.URL, &emptyStr, &emptyStr, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	if result.NotModified {
 		t.Error("expected NotModified=false")
+	}
+}
+
+func TestFetch_AllowLocalNetwork_SkipsSSRF(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("<rss>local content</rss>"))
+	}))
+	defer server.Close()
+
+	result, err := fetch.Fetch(context.Background(), server.URL, nil, nil, true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if string(result.Body) != "<rss>local content</rss>" {
+		t.Errorf("expected body '<rss>local content</rss>', got %q", string(result.Body))
+	}
+}
+
+func TestFetch_DefaultBlocksPrivateIPs(t *testing.T) {
+	_, err := fetch.Fetch(context.Background(), "http://192.168.255.255:9999/feed", nil, nil, false)
+	if err == nil {
+		t.Fatal("expected error for private IP with allowLocalNetwork=false")
 	}
 }
 
