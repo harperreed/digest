@@ -58,6 +58,7 @@ type feedEntry struct {
 	LastFetchedAt *string `yaml:"last_fetched_at,omitempty"`
 	LastError     *string `yaml:"last_error,omitempty"`
 	ErrorCount    int     `yaml:"error_count,omitempty"`
+	LocalNetwork  bool    `yaml:"local_network,omitempty"`
 	CreatedAt     string  `yaml:"created_at"`
 	Slug          string  `yaml:"slug"`
 }
@@ -78,6 +79,7 @@ func (e *feedEntry) toModel() (*models.Feed, error) {
 		LastModified: e.LastModified,
 		LastError:    e.LastError,
 		ErrorCount:   e.ErrorCount,
+		LocalNetwork: e.LocalNetwork,
 		CreatedAt:    createdAt,
 	}
 
@@ -103,6 +105,7 @@ func fromFeedModel(f *models.Feed, slug string) feedEntry {
 		LastModified: f.LastModified,
 		LastError:    f.LastError,
 		ErrorCount:   f.ErrorCount,
+		LocalNetwork: f.LocalNetwork,
 		CreatedAt:    mdstore.FormatTime(f.CreatedAt.UTC()),
 		Slug:         slug,
 	}

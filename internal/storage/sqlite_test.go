@@ -909,6 +909,47 @@ func TestBoolToInt(t *testing.T) {
 	}
 }
 
+func TestSQLite_FeedLocalNetwork(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+
+	feed := NewFeed("http://192.168.1.50:8080/feed.xml")
+	feed.LocalNetwork = true
+
+	if err := store.CreateFeed(feed); err != nil {
+		t.Fatalf("create feed: %v", err)
+	}
+
+	got, err := store.GetFeed(feed.ID)
+	if err != nil {
+		t.Fatalf("get feed: %v", err)
+	}
+
+	if !got.LocalNetwork {
+		t.Error("expected LocalNetwork=true after round-trip")
+	}
+}
+
+func TestSQLite_FeedLocalNetworkDefaultFalse(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+
+	feed := NewFeed("https://example.com/feed.xml")
+
+	if err := store.CreateFeed(feed); err != nil {
+		t.Fatalf("create feed: %v", err)
+	}
+
+	got, err := store.GetFeed(feed.ID)
+	if err != nil {
+		t.Fatalf("get feed: %v", err)
+	}
+
+	if got.LocalNetwork {
+		t.Error("expected LocalNetwork=false by default")
+	}
+}
+
 func newTestStore(t *testing.T) *SQLiteStore {
 	t.Helper()
 	tmpDir := t.TempDir()

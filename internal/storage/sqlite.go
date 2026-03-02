@@ -61,6 +61,7 @@ func (s *SQLiteStore) initSchema() error {
 			last_fetched_at TIMESTAMP,
 			last_error TEXT,
 			error_count INTEGER DEFAULT 0,
+			local_network INTEGER DEFAULT 0,
 			created_at TIMESTAMP NOT NULL
 		);
 
@@ -129,13 +130,13 @@ func (s *SQLiteStore) Close() error {
 // CreateFeed stores a new feed.
 func (s *SQLiteStore) CreateFeed(feed *models.Feed) error {
 	query := `
-		INSERT INTO feeds (id, url, title, folder, etag, last_modified, last_fetched_at, last_error, error_count, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO feeds (id, url, title, folder, etag, last_modified, last_fetched_at, last_error, error_count, local_network, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 	_, err := s.db.Exec(query,
 		feed.ID, feed.URL, feed.Title, feed.Folder,
 		feed.ETag, feed.LastModified, timeToSQL(feed.LastFetchedAt),
-		feed.LastError, feed.ErrorCount, feed.CreatedAt,
+		feed.LastError, feed.ErrorCount, boolToInt(feed.LocalNetwork), feed.CreatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("insert feed: %w", err)
@@ -146,7 +147,7 @@ func (s *SQLiteStore) CreateFeed(feed *models.Feed) error {
 // GetFeed retrieves a feed by ID.
 func (s *SQLiteStore) GetFeed(id string) (*models.Feed, error) {
 	query := `
-		SELECT id, url, title, folder, etag, last_modified, last_fetched_at, last_error, error_count, created_at
+		SELECT id, url, title, folder, etag, last_modified, last_fetched_at, last_error, error_count, local_network, created_at
 		FROM feeds WHERE id = ?
 	`
 	return s.scanFeed(s.db.QueryRow(query, id))
@@ -155,7 +156,7 @@ func (s *SQLiteStore) GetFeed(id string) (*models.Feed, error) {
 // GetFeedByURL finds a feed by its URL.
 func (s *SQLiteStore) GetFeedByURL(url string) (*models.Feed, error) {
 	query := `
-		SELECT id, url, title, folder, etag, last_modified, last_fetched_at, last_error, error_count, created_at
+		SELECT id, url, title, folder, etag, last_modified, last_fetched_at, last_error, error_count, local_network, created_at
 		FROM feeds WHERE url = ?
 	`
 	return s.scanFeed(s.db.QueryRow(query, url))
@@ -168,7 +169,7 @@ func (s *SQLiteStore) GetFeedByPrefix(prefix string) (*models.Feed, error) {
 	}
 
 	query := `
-		SELECT id, url, title, folder, etag, last_modified, last_fetched_at, last_error, error_count, created_at
+		SELECT id, url, title, folder, etag, last_modified, last_fetched_at, last_error, error_count, local_network, created_at
 		FROM feeds WHERE id LIKE ?
 	`
 	rows, err := s.db.Query(query, prefix+"%")
@@ -198,7 +199,7 @@ func (s *SQLiteStore) GetFeedByPrefix(prefix string) (*models.Feed, error) {
 // ListFeeds returns all feeds, sorted by creation date (newest first).
 func (s *SQLiteStore) ListFeeds() ([]*models.Feed, error) {
 	query := `
-		SELECT id, url, title, folder, etag, last_modified, last_fetched_at, last_error, error_count, created_at
+		SELECT id, url, title, folder, etag, last_modified, last_fetched_at, last_error, error_count, local_network, created_at
 		FROM feeds ORDER BY created_at DESC
 	`
 	rows, err := s.db.Query(query)
@@ -223,12 +224,12 @@ func (s *SQLiteStore) UpdateFeed(feed *models.Feed) error {
 	query := `
 		UPDATE feeds SET
 			url = ?, title = ?, folder = ?, etag = ?, last_modified = ?,
-			last_fetched_at = ?, last_error = ?, error_count = ?
+			last_fetched_at = ?, last_error = ?, error_count = ?, local_network = ?
 		WHERE id = ?
 	`
 	result, err := s.db.Exec(query,
 		feed.URL, feed.Title, feed.Folder, feed.ETag, feed.LastModified,
-		timeToSQL(feed.LastFetchedAt), feed.LastError, feed.ErrorCount,
+		timeToSQL(feed.LastFetchedAt), feed.LastError, feed.ErrorCount, boolToInt(feed.LocalNetwork),
 		feed.ID,
 	)
 	if err != nil {
@@ -670,10 +671,11 @@ func (s *SQLiteStore) Search(query string, limit int) ([]*models.Entry, error) {
 func (s *SQLiteStore) scanFeed(row *sql.Row) (*models.Feed, error) {
 	var feed models.Feed
 	var lastFetched sql.NullTime
+	var localNetworkInt int
 	if err := row.Scan(
 		&feed.ID, &feed.URL, &feed.Title, &feed.Folder,
 		&feed.ETag, &feed.LastModified, &lastFetched,
-		&feed.LastError, &feed.ErrorCount, &feed.CreatedAt,
+		&feed.LastError, &feed.ErrorCount, &localNetworkInt, &feed.CreatedAt,
 	); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("feed not found")
@@ -683,22 +685,25 @@ func (s *SQLiteStore) scanFeed(row *sql.Row) (*models.Feed, error) {
 	if lastFetched.Valid {
 		feed.LastFetchedAt = &lastFetched.Time
 	}
+	feed.LocalNetwork = localNetworkInt == 1
 	return &feed, nil
 }
 
 func (s *SQLiteStore) scanFeedFromRows(rows *sql.Rows) (*models.Feed, error) {
 	var feed models.Feed
 	var lastFetched sql.NullTime
+	var localNetworkInt int
 	if err := rows.Scan(
 		&feed.ID, &feed.URL, &feed.Title, &feed.Folder,
 		&feed.ETag, &feed.LastModified, &lastFetched,
-		&feed.LastError, &feed.ErrorCount, &feed.CreatedAt,
+		&feed.LastError, &feed.ErrorCount, &localNetworkInt, &feed.CreatedAt,
 	); err != nil {
 		return nil, fmt.Errorf("scan feed: %w", err)
 	}
 	if lastFetched.Valid {
 		feed.LastFetchedAt = &lastFetched.Time
 	}
+	feed.LocalNetwork = localNetworkInt == 1
 	return &feed, nil
 }
 
