@@ -41,9 +41,10 @@ type ListFeedsOutput struct {
 }
 
 type AddFeedInput struct {
-	URL    string  `json:"url"`
-	Title  *string `json:"title,omitempty"`
-	Folder *string `json:"folder,omitempty"`
+	URL          string  `json:"url"`
+	Title        *string `json:"title,omitempty"`
+	Folder       *string `json:"folder,omitempty"`
+	LocalNetwork *bool   `json:"local_network,omitempty"`
 }
 
 type RemoveFeedInput struct {
@@ -198,6 +199,10 @@ func (s *Server) registerAddFeedTool() {
 				"folder": map[string]interface{}{
 					"type":        "string",
 					"description": "Optional folder/category for organization in OPML. Example: 'Tech Blogs'",
+				},
+				"local_network": map[string]interface{}{
+					"type":        "boolean",
+					"description": "If true, allows fetching from local network (private IP) addresses. Use for feeds hosted on LAN servers. Default: false",
 				},
 			},
 			Required: []string{"url"},
@@ -464,6 +469,9 @@ func (s *Server) handleAddFeed(_ context.Context, req mcp.CallToolRequest) (*mcp
 	feed := storage.NewFeed(input.URL)
 	if input.Title != nil {
 		feed.Title = input.Title
+	}
+	if input.LocalNetwork != nil && *input.LocalNetwork {
+		feed.LocalNetwork = true
 	}
 
 	if err := s.store.CreateFeed(feed); err != nil {
@@ -973,7 +981,7 @@ func (s *Server) syncFeed(ctx context.Context, feed *models.Feed, force bool) (i
 	}
 
 	// Fetch the feed
-	result, err := fetch.Fetch(ctx, feed.URL, etag, lastModified, false)
+	result, err := fetch.Fetch(ctx, feed.URL, etag, lastModified, feed.LocalNetwork)
 	if err != nil {
 		// Update error state
 		if updateErr := s.store.UpdateFeedError(feed.ID, err.Error()); updateErr != nil {

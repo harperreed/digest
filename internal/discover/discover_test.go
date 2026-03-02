@@ -72,7 +72,7 @@ func TestDiscover_DirectFeed(t *testing.T) {
 	}))
 	defer server.Close()
 
-	feed, err := Discover(server.URL)
+	feed, err := Discover(server.URL, false)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestDiscover_DirectAtomFeed(t *testing.T) {
 	}))
 	defer server.Close()
 
-	feed, err := Discover(server.URL)
+	feed, err := Discover(server.URL, false)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestDiscover_HTMLWithFeedLink(t *testing.T) {
 	}))
 	defer server.Close()
 
-	feed, err := Discover(server.URL)
+	feed, err := Discover(server.URL, false)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -163,7 +163,7 @@ func TestDiscover_HTMLWithRelativeFeedLink(t *testing.T) {
 	}))
 	defer server.Close()
 
-	feed, err := Discover(server.URL + "/blog/")
+	feed, err := Discover(server.URL+"/blog/", false)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -193,7 +193,7 @@ func TestDiscover_ProbeCommonPaths(t *testing.T) {
 	}))
 	defer server.Close()
 
-	feed, err := Discover(server.URL)
+	feed, err := Discover(server.URL, false)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -215,7 +215,7 @@ func TestDiscover_NoFeedFound(t *testing.T) {
 	}))
 	defer server.Close()
 
-	feed, err := Discover(server.URL)
+	feed, err := Discover(server.URL, false)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -230,14 +230,14 @@ func TestDiscover_NoFeedFound(t *testing.T) {
 }
 
 func TestDiscover_InvalidURL(t *testing.T) {
-	_, err := Discover("not-a-valid-url")
+	_, err := Discover("not-a-valid-url", false)
 	if err == nil {
 		t.Fatal("expected error for invalid URL")
 	}
 }
 
 func TestDiscover_MissingScheme(t *testing.T) {
-	_, err := Discover("example.com/feed")
+	_, err := Discover("example.com/feed", false)
 	if err == nil {
 		t.Fatal("expected error for URL without scheme")
 	}
@@ -251,7 +251,7 @@ func TestExtractFeedLinks_MultipleFeeds(t *testing.T) {
 	defer server.Close()
 
 	// Fetch the HTML
-	result, _, err := tryDirectFeed(server.URL)
+	result, _, err := tryDirectFeed(server.URL, false)
 	if result != nil {
 		t.Fatal("expected HTML page, not a feed")
 	}
@@ -303,7 +303,7 @@ func TestDiscover_AbsoluteFeedLink(t *testing.T) {
 	}))
 	defer htmlServer.Close()
 
-	feed, err := Discover(htmlServer.URL)
+	feed, err := Discover(htmlServer.URL, false)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -345,7 +345,7 @@ func TestDiscover_BrokenLinkTags(t *testing.T) {
 	}))
 	defer server.Close()
 
-	feed, err := Discover(server.URL)
+	feed, err := Discover(server.URL, false)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -390,7 +390,7 @@ func TestDiscover_MultipleFeedsSameType(t *testing.T) {
 	}))
 	defer server.Close()
 
-	feed, err := Discover(server.URL)
+	feed, err := Discover(server.URL, false)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -428,7 +428,7 @@ func TestDiscover_RelativeURLWithDotDot(t *testing.T) {
 	}))
 	defer server.Close()
 
-	feed, err := Discover(server.URL + "/blog/posts/")
+	feed, err := Discover(server.URL+"/blog/posts/", false)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -460,7 +460,7 @@ func TestDiscover_MalformedHTML(t *testing.T) {
 	}))
 	defer server.Close()
 
-	feed, err := Discover(server.URL)
+	feed, err := Discover(server.URL, false)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -484,7 +484,7 @@ func TestDiscover_URLWithUnusualPort(t *testing.T) {
 	}))
 	defer server.Close()
 
-	feed, err := Discover(server.URL)
+	feed, err := Discover(server.URL, false)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -510,7 +510,7 @@ func TestDiscover_URLWithQueryParameters(t *testing.T) {
 	defer server.Close()
 
 	feedURL := server.URL + "?format=rss&limit=10"
-	feed, err := Discover(feedURL)
+	feed, err := Discover(feedURL, false)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -533,7 +533,7 @@ func TestDiscover_URLWithFragment(t *testing.T) {
 
 	// Fragments should be preserved in the URL
 	feedURL := server.URL + "#section"
-	feed, err := Discover(feedURL)
+	feed, err := Discover(feedURL, false)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -548,28 +548,28 @@ func TestDiscover_URLWithFragment(t *testing.T) {
 }
 
 func TestDiscover_InvalidURLMalformedHost(t *testing.T) {
-	_, err := Discover("http://[invalid-host")
+	_, err := Discover("http://[invalid-host", false)
 	if err == nil {
 		t.Fatal("expected error for malformed host")
 	}
 }
 
 func TestDiscover_URLWithSpaces(t *testing.T) {
-	_, err := Discover("http://example.com/feed with spaces.xml")
+	_, err := Discover("http://example.com/feed with spaces.xml", false)
 	if err == nil {
 		t.Fatal("expected error for URL with spaces")
 	}
 }
 
 func TestDiscover_EmptyURL(t *testing.T) {
-	_, err := Discover("")
+	_, err := Discover("", false)
 	if err == nil {
 		t.Fatal("expected error for empty URL")
 	}
 }
 
 func TestDiscover_URLWithoutHost(t *testing.T) {
-	_, err := Discover("http://")
+	_, err := Discover("http://", false)
 	if err == nil {
 		t.Fatal("expected error for URL without host")
 	}
@@ -597,7 +597,7 @@ func TestDiscover_ProbeReturns200ButNotFeed(t *testing.T) {
 	}))
 	defer server.Close()
 
-	feed, err := Discover(server.URL)
+	feed, err := Discover(server.URL, false)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -626,7 +626,7 @@ func TestDiscover_ProbeAllPathsFail(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, err := Discover(server.URL)
+	_, err := Discover(server.URL, false)
 	if err != ErrNoFeedFound {
 		t.Errorf("expected ErrNoFeedFound, got: %v", err)
 	}
@@ -647,7 +647,7 @@ func TestDiscover_ProbeServerError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, err := Discover(server.URL)
+	_, err := Discover(server.URL, false)
 	if err != ErrNoFeedFound {
 		t.Errorf("expected ErrNoFeedFound, got: %v", err)
 	}
@@ -681,7 +681,7 @@ func TestDiscover_FeedLinkPointsToInvalidURL(t *testing.T) {
 	}))
 	defer server.Close()
 
-	feed, err := Discover(server.URL)
+	feed, err := Discover(server.URL, false)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -716,7 +716,7 @@ func TestDiscover_FeedLinkPointsTo404(t *testing.T) {
 	}))
 	defer server.Close()
 
-	feed, err := Discover(server.URL)
+	feed, err := Discover(server.URL, false)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}

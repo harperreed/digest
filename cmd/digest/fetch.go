@@ -113,7 +113,7 @@ func syncFeed(feed *models.Feed, force bool) (newCount int, wasCached bool, err 
 	}
 
 	// Fetch the feed
-	result, err := fetch.Fetch(context.Background(), feed.URL, etag, lastModified, false)
+	result, err := fetch.Fetch(context.Background(), feed.URL, etag, lastModified, feed.LocalNetwork)
 	if err != nil {
 		// Update error state
 		if updateErr := store.UpdateFeedError(feed.ID, err.Error()); updateErr != nil {

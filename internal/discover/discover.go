@@ -48,7 +48,7 @@ type DiscoveredFeed struct {
 //  3. Probe common feed URL patterns
 //
 // Returns the discovered feed, or an error if none found.
-func Discover(inputURL string) (*DiscoveredFeed, error) {
+func Discover(inputURL string, allowLocalNetwork bool) (*DiscoveredFeed, error) {
 	parsedURL, err := url.Parse(inputURL)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidURL, err)
@@ -59,7 +59,7 @@ func Discover(inputURL string) (*DiscoveredFeed, error) {
 	}
 
 	// Strategy 1: Try direct feed
-	feed, body, err := tryDirectFeed(inputURL)
+	feed, body, err := tryDirectFeed(inputURL, allowLocalNetwork)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch URL: %w", err)
 	}
@@ -72,7 +72,7 @@ func Discover(inputURL string) (*DiscoveredFeed, error) {
 	if err == nil && len(feeds) > 0 {
 		// Verify the first discovered link is a valid feed
 		for _, candidate := range feeds {
-			verifiedFeed, _, verifyErr := tryDirectFeed(candidate.URL)
+			verifiedFeed, _, verifyErr := tryDirectFeed(candidate.URL, allowLocalNetwork)
 			if verifyErr == nil && verifiedFeed != nil {
 				// Use title from HTML link if feed doesn't have one
 				if verifiedFeed.Title == "" && candidate.Title != "" {
@@ -84,7 +84,7 @@ func Discover(inputURL string) (*DiscoveredFeed, error) {
 	}
 
 	// Strategy 3: Probe common paths
-	feed, err = probeCommonPaths(parsedURL)
+	feed, err = probeCommonPaths(parsedURL, allowLocalNetwork)
 	if err == nil && feed != nil {
 		return feed, nil
 	}
@@ -95,8 +95,8 @@ func Discover(inputURL string) (*DiscoveredFeed, error) {
 // tryDirectFeed attempts to fetch and parse the URL as an RSS/Atom feed.
 // Returns the feed if successful, or nil if the content is not a valid feed.
 // Also returns the raw body for use in HTML parsing if it's not a feed.
-func tryDirectFeed(feedURL string) (*DiscoveredFeed, []byte, error) {
-	result, err := fetch.Fetch(context.Background(), feedURL, nil, nil, false)
+func tryDirectFeed(feedURL string, allowLocalNetwork bool) (*DiscoveredFeed, []byte, error) {
+	result, err := fetch.Fetch(context.Background(), feedURL, nil, nil, allowLocalNetwork)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -161,7 +161,7 @@ func extractFeedLinks(htmlBody []byte, baseURL *url.URL) ([]DiscoveredFeed, erro
 }
 
 // probeCommonPaths tries common feed URL patterns against the base URL
-func probeCommonPaths(baseURL *url.URL) (*DiscoveredFeed, error) {
+func probeCommonPaths(baseURL *url.URL, allowLocalNetwork bool) (*DiscoveredFeed, error) {
 	// Build base URL without path
 	probeBase := &url.URL{
 		Scheme: baseURL.Scheme,
@@ -170,7 +170,7 @@ func probeCommonPaths(baseURL *url.URL) (*DiscoveredFeed, error) {
 
 	for _, path := range commonFeedPaths {
 		probeURL := probeBase.String() + path
-		feed, _, err := tryDirectFeed(probeURL)
+		feed, _, err := tryDirectFeed(probeURL, allowLocalNetwork)
 		if err == nil && feed != nil {
 			return feed, nil
 		}

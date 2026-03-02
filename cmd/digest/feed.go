@@ -29,6 +29,7 @@ var feedAddCmd = &cobra.Command{
 		folder, _ := cmd.Flags().GetString("folder")
 		title, _ := cmd.Flags().GetString("title")
 		noDiscover, _ := cmd.Flags().GetBool("no-discover")
+		localNetwork, _ := cmd.Flags().GetBool("local")
 
 		var feedURL, feedTitle string
 
@@ -39,7 +40,7 @@ var feedAddCmd = &cobra.Command{
 		} else {
 			// Discover feed from URL
 			fmt.Printf("Discovering feed at %s...\n", inputURL)
-			discovered, err := discover.Discover(inputURL)
+			discovered, err := discover.Discover(inputURL, localNetwork)
 			if err != nil {
 				return fmt.Errorf("could not find feed at %s: %w", inputURL, err)
 			}
@@ -66,6 +67,7 @@ var feedAddCmd = &cobra.Command{
 		// Create new feed
 		feed := storage.NewFeed(feedURL)
 		feed.Folder = folder
+		feed.LocalNetwork = localNetwork
 		if feedTitle != "" {
 			feed.Title = &feedTitle
 		}
@@ -219,4 +221,5 @@ func init() {
 	feedAddCmd.Flags().StringP("folder", "f", "", "folder to organize feed in")
 	feedAddCmd.Flags().StringP("title", "t", "", "feed title (defaults to discovered title)")
 	feedAddCmd.Flags().Bool("no-discover", false, "skip feed discovery and use URL as-is")
+	feedAddCmd.Flags().Bool("local", false, "allow fetching from local network (private IP) addresses")
 }
