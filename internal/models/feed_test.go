@@ -363,6 +363,13 @@ func TestEntry_GetTitle(t *testing.T) {
 	}
 }
 
+func TestFeed_LocalNetworkDefault(t *testing.T) {
+	feed := NewFeed("http://192.168.1.50:8080/feed.xml")
+	if feed.LocalNetwork {
+		t.Error("expected LocalNetwork to default to false")
+	}
+}
+
 // Helper functions for tests
 func stringPtr(s string) *string {
 	return &s

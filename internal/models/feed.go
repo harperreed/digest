@@ -24,6 +24,7 @@ type Feed struct {
 	LastFetchedAt *time.Time // Timestamp of last successful fetch
 	LastError     *string    // Last error message (if any)
 	ErrorCount    int        // Consecutive error count for backoff strategy
+	LocalNetwork  bool       // Allow fetching from private/local network IPs
 	CreatedAt     time.Time  // Feed creation timestamp
 }
 
