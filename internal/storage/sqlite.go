@@ -44,6 +44,11 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 		return nil, fmt.Errorf("initialize schema: %w", err)
 	}
 
+	if err := store.migrate(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("run migrations: %w", err)
+	}
+
 	return store, nil
 }
 
@@ -118,6 +123,16 @@ func (s *SQLiteStore) initSchema() error {
 
 	_, err := s.db.Exec(schema)
 	return err
+}
+
+// migrate runs schema migrations for existing databases.
+func (s *SQLiteStore) migrate() error {
+	// Add local_network column if it doesn't exist (for databases created before local-network-feeds)
+	_, err := s.db.Exec("ALTER TABLE feeds ADD COLUMN local_network INTEGER DEFAULT 0")
+	if err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		return fmt.Errorf("migrate feeds.local_network: %w", err)
+	}
+	return nil
 }
 
 // Close closes the database connection.

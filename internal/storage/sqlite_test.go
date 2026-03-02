@@ -950,6 +950,31 @@ func TestSQLite_FeedLocalNetworkDefaultFalse(t *testing.T) {
 	}
 }
 
+func TestMigrateIdempotent(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+
+	// migrate() already ran during NewSQLiteStore; calling it again should not error
+	if err := store.migrate(); err != nil {
+		t.Fatalf("second migrate() call should be idempotent, got: %v", err)
+	}
+
+	// Verify the column still works by round-tripping a local_network feed
+	feed := NewFeed("http://10.0.0.1/feed.xml")
+	feed.LocalNetwork = true
+	if err := store.CreateFeed(feed); err != nil {
+		t.Fatalf("CreateFeed after double-migrate: %v", err)
+	}
+
+	got, err := store.GetFeed(feed.ID)
+	if err != nil {
+		t.Fatalf("GetFeed after double-migrate: %v", err)
+	}
+	if !got.LocalNetwork {
+		t.Error("expected LocalNetwork=true after double-migrate round-trip")
+	}
+}
+
 func newTestStore(t *testing.T) *SQLiteStore {
 	t.Helper()
 	tmpDir := t.TempDir()

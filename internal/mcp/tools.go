@@ -28,6 +28,7 @@ type FeedOutput struct {
 	URL           string     `json:"url"`
 	Title         *string    `json:"title,omitempty"`
 	Folder        string     `json:"folder,omitempty"`
+	LocalNetwork  bool       `json:"local_network,omitempty"`
 	LastFetchedAt *time.Time `json:"last_fetched_at,omitempty"`
 	LastError     *string    `json:"last_error,omitempty"`
 	ErrorCount    int        `json:"error_count"`
@@ -414,6 +415,7 @@ func (s *Server) handleListFeeds(_ context.Context, req mcp.CallToolRequest) (*m
 		if storedFeed, exists := storedFeedMap[opmlFeed.URL]; exists {
 			output.ID = storedFeed.ID
 			output.Title = storedFeed.Title
+			output.LocalNetwork = storedFeed.LocalNetwork
 			output.LastFetchedAt = storedFeed.LastFetchedAt
 			output.LastError = storedFeed.LastError
 			output.ErrorCount = storedFeed.ErrorCount
@@ -502,12 +504,13 @@ func (s *Server) handleAddFeed(_ context.Context, req mcp.CallToolRequest) (*mcp
 	s.opmlMu.Unlock()
 
 	output := FeedOutput{
-		ID:         feed.ID,
-		URL:        feed.URL,
-		Title:      feed.Title,
-		Folder:     folder,
-		ErrorCount: feed.ErrorCount,
-		CreatedAt:  feed.CreatedAt,
+		ID:           feed.ID,
+		URL:          feed.URL,
+		Title:        feed.Title,
+		Folder:       folder,
+		LocalNetwork: feed.LocalNetwork,
+		ErrorCount:   feed.ErrorCount,
+		CreatedAt:    feed.CreatedAt,
 	}
 
 	jsonBytes, err := json.MarshalIndent(output, "", "  ")
