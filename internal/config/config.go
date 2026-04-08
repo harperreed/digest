@@ -61,6 +61,12 @@ func ExpandPath(path string) string {
 	return path
 }
 
+// ProfileDataDir returns the data directory for a named profile.
+// Each profile is a subdirectory under the main data directory.
+func (c *Config) ProfileDataDir(profile string) string {
+	return filepath.Join(c.GetDataDir(), profile)
+}
+
 // OpenStorage creates a Store implementation based on the configured backend.
 func (c *Config) OpenStorage() (storage.Store, error) {
 	backend := c.GetBackend()

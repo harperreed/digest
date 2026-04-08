@@ -391,6 +391,48 @@ func TestLoadMissingConfig_ExistingSQLiteUser(t *testing.T) {
 	}
 }
 
+func TestProfileDataDir(t *testing.T) {
+	cfg := &Config{DataDir: "/data/digest"}
+	got := cfg.ProfileDataDir("work")
+	expected := "/data/digest/work"
+	if got != expected {
+		t.Errorf("ProfileDataDir(\"work\") = %q, want %q", got, expected)
+	}
+}
+
+func TestProfileDataDirDefault(t *testing.T) {
+	cfg := &Config{DataDir: "/data/digest"}
+	got := cfg.ProfileDataDir("default")
+	expected := "/data/digest/default"
+	if got != expected {
+		t.Errorf("ProfileDataDir(\"default\") = %q, want %q", got, expected)
+	}
+}
+
+func TestProfileDataDirTildeExpansion(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skipf("cannot get home dir: %v", err)
+	}
+	cfg := &Config{DataDir: "~/digest-data"}
+	got := cfg.ProfileDataDir("security")
+	expected := filepath.Join(home, "digest-data", "security")
+	if got != expected {
+		t.Errorf("ProfileDataDir(\"security\") = %q, want %q", got, expected)
+	}
+}
+
+func TestProfileDataDirDefaultDataDir(t *testing.T) {
+	cfg := &Config{}
+	got := cfg.ProfileDataDir("work")
+	if !filepath.IsAbs(got) {
+		t.Errorf("expected absolute path, got %q", got)
+	}
+	if filepath.Base(got) != "work" {
+		t.Errorf("expected path to end with 'work', got %q", got)
+	}
+}
+
 func TestLoadAutoCreatesValidConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", tmpDir)
