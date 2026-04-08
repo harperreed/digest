@@ -433,6 +433,64 @@ func TestProfileDataDirDefaultDataDir(t *testing.T) {
 	}
 }
 
+func TestOpenProfileStorageSqlite(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := &Config{Backend: "sqlite", DataDir: tmpDir}
+
+	store, err := cfg.OpenProfileStorage("work")
+	if err != nil {
+		t.Fatalf("OpenProfileStorage failed: %v", err)
+	}
+	defer store.Close()
+
+	// Verify DB was created in profile subdirectory
+	dbPath := filepath.Join(tmpDir, "work", "digest.db")
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		t.Errorf("expected database at %s", dbPath)
+	}
+}
+
+func TestOpenProfileStorageMarkdown(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := &Config{Backend: "markdown", DataDir: tmpDir}
+
+	store, err := cfg.OpenProfileStorage("personal")
+	if err != nil {
+		t.Fatalf("OpenProfileStorage failed: %v", err)
+	}
+	defer store.Close()
+
+	// Verify profile directory was created
+	profileDir := filepath.Join(tmpDir, "personal")
+	info, err := os.Stat(profileDir)
+	if err != nil {
+		t.Fatalf("expected profile directory at %s: %v", profileDir, err)
+	}
+	if !info.IsDir() {
+		t.Errorf("expected directory at %s", profileDir)
+	}
+}
+
+func TestOpenProfileStorageAutoCreatesDir(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := &Config{Backend: "sqlite", DataDir: tmpDir}
+
+	profileDir := filepath.Join(tmpDir, "newprofile")
+	if _, err := os.Stat(profileDir); !os.IsNotExist(err) {
+		t.Fatal("profile dir should not exist yet")
+	}
+
+	store, err := cfg.OpenProfileStorage("newprofile")
+	if err != nil {
+		t.Fatalf("OpenProfileStorage failed: %v", err)
+	}
+	defer store.Close()
+
+	if _, err := os.Stat(profileDir); os.IsNotExist(err) {
+		t.Error("expected profile directory to be auto-created")
+	}
+}
+
 func TestLoadAutoCreatesValidConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", tmpDir)

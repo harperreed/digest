@@ -83,6 +83,27 @@ func (c *Config) OpenStorage() (storage.Store, error) {
 	}
 }
 
+// OpenProfileStorage creates a Store for the given profile.
+// The profile's data directory is auto-created if it doesn't exist.
+func (c *Config) OpenProfileStorage(profile string) (storage.Store, error) {
+	backend := c.GetBackend()
+	profileDir := c.ProfileDataDir(profile)
+
+	if err := os.MkdirAll(profileDir, 0750); err != nil {
+		return nil, fmt.Errorf("failed to create profile directory: %w", err)
+	}
+
+	switch backend {
+	case "sqlite":
+		dbPath := filepath.Join(profileDir, "digest.db")
+		return storage.NewSQLiteStore(dbPath)
+	case "markdown":
+		return storage.NewMarkdownStore(profileDir)
+	default:
+		return nil, fmt.Errorf("unknown backend: %q", backend)
+	}
+}
+
 // GetConfigPath returns the config file path.
 func GetConfigPath() string {
 	configDir := os.Getenv("XDG_CONFIG_HOME")
