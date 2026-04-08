@@ -43,6 +43,10 @@ Data stored locally. Configure backend via config.json.`,
 		case "setup", "migrate", "version", "help", "completion":
 			return nil
 		}
+		// Profile subcommands don't need storage
+		if cmd.Parent() != nil && cmd.Parent().Name() == "profile" {
+			return nil
+		}
 
 		// Load config and open profile-scoped storage
 		cfg, err := config.Load()
