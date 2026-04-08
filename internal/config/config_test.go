@@ -789,3 +789,25 @@ func TestLoadAutoCreatesValidConfig(t *testing.T) {
 		t.Errorf("expected auto-created config backend 'markdown', got %v", raw["backend"])
 	}
 }
+
+func TestDefaultFirstRunConfig_SQLiteInProfileLayout(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	t.Setenv("XDG_DATA_HOME", tmpDir)
+
+	dataDir := filepath.Join(tmpDir, "digest", "default")
+	if err := os.MkdirAll(dataDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "digest.db"), []byte("db"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if cfg.Backend != "sqlite" {
+		t.Errorf("expected backend 'sqlite' for existing SQLite user in profile layout, got %q", cfg.Backend)
+	}
+}

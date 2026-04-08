@@ -260,13 +260,16 @@ func defaultDataDir() string {
 // If an existing SQLite database is found, it preserves SQLite as the backend.
 // Otherwise, it defaults to markdown for new users.
 func defaultFirstRunConfig() *Config {
-	dbPath := filepath.Join(defaultDataDir(), defaultDBFilename)
-	_, err := os.Stat(dbPath)
-	switch {
-	case err == nil:
-		return &Config{Backend: "sqlite"}
-	case !os.IsNotExist(err):
-		fmt.Fprintf(os.Stderr, "warning: could not check for existing database: %v\n", err)
+	dataDir := defaultDataDir()
+	for _, path := range []string{
+		filepath.Join(dataDir, defaultDBFilename),
+		filepath.Join(dataDir, "default", defaultDBFilename),
+	} {
+		if _, err := os.Stat(path); err == nil {
+			return &Config{Backend: "sqlite"}
+		} else if !os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr, "warning: could not check for existing database: %v\n", err)
+		}
 	}
 	return &Config{Backend: "markdown"}
 }
