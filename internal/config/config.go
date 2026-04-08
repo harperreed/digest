@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/harper/digest/internal/storage"
@@ -61,10 +62,37 @@ func ExpandPath(path string) string {
 	return path
 }
 
+var profileNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$`)
+
+var windowsReserved = map[string]bool{
+	"con": true, "prn": true, "aux": true, "nul": true,
+	"com1": true, "com2": true, "com3": true, "com4": true,
+	"com5": true, "com6": true, "com7": true, "com8": true, "com9": true,
+	"lpt1": true, "lpt2": true, "lpt3": true, "lpt4": true,
+	"lpt5": true, "lpt6": true, "lpt7": true, "lpt8": true, "lpt9": true,
+}
+
+// ValidateProfileName checks that a profile name is safe to use as a directory name.
+// Names must be 1-64 alphanumeric characters, hyphens, underscores, or dots,
+// must start with an alphanumeric character, and must not be Windows reserved names.
+func ValidateProfileName(name string) error {
+	if !profileNamePattern.MatchString(name) {
+		return fmt.Errorf("invalid profile name %q: must be 1-64 alphanumeric characters, hyphens, underscores, or dots (must start with alphanumeric)", name)
+	}
+	if windowsReserved[strings.ToLower(name)] {
+		return fmt.Errorf("invalid profile name %q: reserved name", name)
+	}
+	return nil
+}
+
 // ProfileDataDir returns the data directory for a named profile.
 // Each profile is a subdirectory under the main data directory.
-func (c *Config) ProfileDataDir(profile string) string {
-	return filepath.Join(c.GetDataDir(), profile)
+// Returns an error if the profile name is invalid.
+func (c *Config) ProfileDataDir(profile string) (string, error) {
+	if err := ValidateProfileName(profile); err != nil {
+		return "", err
+	}
+	return filepath.Join(c.GetDataDir(), profile), nil
 }
 
 // OpenStorage creates a Store implementation based on the configured backend.
@@ -86,10 +114,14 @@ func (c *Config) OpenStorage() (storage.Store, error) {
 // OpenProfileStorage creates a Store for the given profile.
 // The profile's data directory is auto-created if it doesn't exist.
 func (c *Config) OpenProfileStorage(profile string) (storage.Store, error) {
-	backend := c.GetBackend()
-	profileDir := c.ProfileDataDir(profile)
+	profileDir, err := c.ProfileDataDir(profile)
+	if err != nil {
+		return nil, err
+	}
 
-	if err := os.MkdirAll(profileDir, 0750); err != nil {
+	backend := c.GetBackend()
+
+	if err := os.MkdirAll(profileDir, 0700); err != nil {
 		return nil, fmt.Errorf("failed to create profile directory: %w", err)
 	}
 

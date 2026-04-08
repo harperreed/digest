@@ -77,12 +77,19 @@ var profileDeleteCmd = &cobra.Command{
 			return fmt.Errorf("cannot delete the default profile")
 		}
 
+		if err := config.ValidateProfileName(name); err != nil {
+			return err
+		}
+
 		cfg, err := config.Load()
 		if err != nil {
 			return fmt.Errorf("failed to load config: %w", err)
 		}
 
-		profileDir := cfg.ProfileDataDir(name)
+		profileDir, err := cfg.ProfileDataDir(name)
+		if err != nil {
+			return err
+		}
 		if _, err := os.Stat(profileDir); os.IsNotExist(err) {
 			return fmt.Errorf("profile %q does not exist", name)
 		}

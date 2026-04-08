@@ -396,7 +396,10 @@ func TestLoadMissingConfig_ExistingSQLiteUser(t *testing.T) {
 
 func TestProfileDataDir(t *testing.T) {
 	cfg := &Config{DataDir: "/data/digest"}
-	got := cfg.ProfileDataDir("work")
+	got, err := cfg.ProfileDataDir("work")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	expected := "/data/digest/work"
 	if got != expected {
 		t.Errorf("ProfileDataDir(\"work\") = %q, want %q", got, expected)
@@ -405,7 +408,10 @@ func TestProfileDataDir(t *testing.T) {
 
 func TestProfileDataDirDefault(t *testing.T) {
 	cfg := &Config{DataDir: "/data/digest"}
-	got := cfg.ProfileDataDir("default")
+	got, err := cfg.ProfileDataDir("default")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	expected := "/data/digest/default"
 	if got != expected {
 		t.Errorf("ProfileDataDir(\"default\") = %q, want %q", got, expected)
@@ -418,7 +424,10 @@ func TestProfileDataDirTildeExpansion(t *testing.T) {
 		t.Skipf("cannot get home dir: %v", err)
 	}
 	cfg := &Config{DataDir: "~/digest-data"}
-	got := cfg.ProfileDataDir("security")
+	got, err := cfg.ProfileDataDir("security")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	expected := filepath.Join(home, "digest-data", "security")
 	if got != expected {
 		t.Errorf("ProfileDataDir(\"security\") = %q, want %q", got, expected)
@@ -427,12 +436,60 @@ func TestProfileDataDirTildeExpansion(t *testing.T) {
 
 func TestProfileDataDirDefaultDataDir(t *testing.T) {
 	cfg := &Config{}
-	got := cfg.ProfileDataDir("work")
+	got, err := cfg.ProfileDataDir("work")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if !filepath.IsAbs(got) {
 		t.Errorf("expected absolute path, got %q", got)
 	}
 	if filepath.Base(got) != "work" {
 		t.Errorf("expected path to end with 'work', got %q", got)
+	}
+}
+
+func TestValidateProfileName_Valid(t *testing.T) {
+	valid := []string{"default", "work", "my-feeds", "security_2024", "a", "A-B.c"}
+	for _, name := range valid {
+		if err := ValidateProfileName(name); err != nil {
+			t.Errorf("ValidateProfileName(%q) should be valid, got: %v", name, err)
+		}
+	}
+}
+
+func TestValidateProfileName_Invalid(t *testing.T) {
+	invalid := []struct {
+		name   string
+		reason string
+	}{
+		{"", "empty string"},
+		{"..", "path traversal"},
+		{".", "dot"},
+		{"../../../etc", "path traversal with slashes"},
+		{"foo/bar", "contains slash"},
+		{"foo\\bar", "contains backslash"},
+		{" work", "starts with space"},
+		{"work ", "ends with space"},
+		{"-work", "starts with hyphen"},
+		{".hidden", "starts with dot"},
+		{"a b", "contains space"},
+		{"CON", "Windows reserved name"},
+		{"nul", "Windows reserved name lowercase"},
+		{"com1", "Windows reserved name lowercase"},
+		{strings.Repeat("a", 65), "too long"},
+	}
+	for _, tc := range invalid {
+		if err := ValidateProfileName(tc.name); err == nil {
+			t.Errorf("ValidateProfileName(%q) should be invalid (%s)", tc.name, tc.reason)
+		}
+	}
+}
+
+func TestProfileDataDir_RejectsTraversal(t *testing.T) {
+	cfg := &Config{DataDir: "/data/digest"}
+	_, err := cfg.ProfileDataDir("../../../etc")
+	if err == nil {
+		t.Error("ProfileDataDir should reject path traversal")
 	}
 }
 

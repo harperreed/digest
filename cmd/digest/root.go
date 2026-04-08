@@ -61,7 +61,11 @@ Data stored locally. Configure backend via config.json.`,
 
 		// Set default OPML path to profile-scoped directory if not explicitly provided
 		if opmlPath == "" {
-			opmlPath = filepath.Join(cfg.ProfileDataDir(profileName), "feeds.opml")
+			profileDir, err := cfg.ProfileDataDir(profileName)
+			if err != nil {
+				return fmt.Errorf("invalid profile: %w", err)
+			}
+			opmlPath = filepath.Join(profileDir, "feeds.opml")
 		}
 
 		store, err = cfg.OpenProfileStorage(profileName)
@@ -116,7 +120,11 @@ func GetDefaultOPMLPath() string {
 	if err != nil {
 		return filepath.Join(getDataDir(), "digest", "default", "feeds.opml")
 	}
-	return filepath.Join(cfg.ProfileDataDir("default"), "feeds.opml")
+	profileDir, err := cfg.ProfileDataDir("default")
+	if err != nil {
+		return filepath.Join(getDataDir(), "digest", "default", "feeds.opml")
+	}
+	return filepath.Join(profileDir, "feeds.opml")
 }
 
 func getDataDir() string {
