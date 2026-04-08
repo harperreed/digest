@@ -63,7 +63,10 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 	}
 
 	// Determine target data directory
-	targetDataDir := cfg.GetDataDir()
+	targetDataDir, err := cfg.ProfileDataDir(profileName)
+	if err != nil {
+		return fmt.Errorf("invalid profile: %w", err)
+	}
 	if migrateDataDir != "" {
 		targetDataDir = config.ExpandPath(migrateDataDir)
 	}
@@ -77,8 +80,13 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("target directory %q is not empty; use --force to overwrite", targetDataDir)
 	}
 
+	// Run profile layout migration in case this is a first run after upgrade
+	if err := cfg.MigrateToProfileLayout(); err != nil {
+		return fmt.Errorf("migrate layout: %w", err)
+	}
+
 	// Open source storage
-	src, err := cfg.OpenStorage()
+	src, err := cfg.OpenProfileStorage(profileName)
 	if err != nil {
 		return fmt.Errorf("open source storage (%s): %w", sourceBackend, err)
 	}
