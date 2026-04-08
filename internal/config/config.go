@@ -128,41 +128,67 @@ func (c *Config) OpenProfileStorage(profile string) (storage.Store, error) {
 	return c.openStore(c.GetBackend(), profileDir)
 }
 
-// MigrateToProfileLayout moves flat-layout data files (digest.db, feeds.opml)
-// from the data dir root into a "default" profile subdirectory.
+// MigrateToProfileLayout moves flat-layout data files from the data dir root
+// into a "default" profile subdirectory. Handles SQLite DB + WAL/SHM sidecars,
+// OPML, the markdown feed registry (_feeds.yaml), and markdown feed directories.
 // This is a one-time, idempotent migration for upgrading from pre-profile layout.
 func (c *Config) MigrateToProfileLayout() error {
 	dataDir := c.GetDataDir()
 
-	// Check for flat layout files at the root
-	dbPath := filepath.Join(dataDir, "digest.db")
-	opmlPath := filepath.Join(dataDir, "feeds.opml")
+	// Detect flat layout by checking for known data files at root
+	knownFiles := []string{"digest.db", "feeds.opml", "_feeds.yaml"}
+	needsMigration := false
+	for _, name := range knownFiles {
+		if fileExists(filepath.Join(dataDir, name)) {
+			needsMigration = true
+			break
+		}
+	}
 
-	dbExists := fileExists(dbPath)
-	opmlExists := fileExists(opmlPath)
-
-	// Nothing to migrate
-	if !dbExists && !opmlExists {
+	if !needsMigration {
 		return nil
 	}
 
 	// Create default profile directory
 	defaultDir := filepath.Join(dataDir, "default")
-	if err := os.MkdirAll(defaultDir, 0750); err != nil {
+	if err := os.MkdirAll(defaultDir, 0700); err != nil {
 		return fmt.Errorf("failed to create default profile directory: %w", err)
 	}
 
-	// Move files
-	if dbExists {
-		dst := filepath.Join(defaultDir, "digest.db")
-		if err := os.Rename(dbPath, dst); err != nil {
-			return fmt.Errorf("failed to move digest.db: %w", err)
+	// Move known files (SQLite DB + sidecars, OPML, markdown feed registry)
+	filesToMove := []string{
+		"digest.db", "digest.db-wal", "digest.db-shm",
+		"feeds.opml",
+		"_feeds.yaml",
+	}
+	for _, name := range filesToMove {
+		src := filepath.Join(dataDir, name)
+		if !fileExists(src) {
+			continue
+		}
+		dst := filepath.Join(defaultDir, name)
+		if err := os.Rename(src, dst); err != nil {
+			return fmt.Errorf("failed to move %s: %w", name, err)
 		}
 	}
-	if opmlExists {
-		dst := filepath.Join(defaultDir, "feeds.opml")
-		if err := os.Rename(opmlPath, dst); err != nil {
-			return fmt.Errorf("failed to move feeds.opml: %w", err)
+
+	// Move remaining directories at root into default/ (markdown feed directories).
+	// Skip "default" itself.
+	entries, err := os.ReadDir(dataDir)
+	if err != nil {
+		return fmt.Errorf("failed to read data directory: %w", err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		if entry.Name() == "default" {
+			continue
+		}
+		src := filepath.Join(dataDir, entry.Name())
+		dst := filepath.Join(defaultDir, entry.Name())
+		if err := os.Rename(src, dst); err != nil {
+			return fmt.Errorf("failed to move directory %s: %w", entry.Name(), err)
 		}
 	}
 

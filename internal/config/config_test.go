@@ -705,6 +705,61 @@ func TestProfileIsolation(t *testing.T) {
 	}
 }
 
+func TestMigrateToProfileLayout_MovesWALFiles(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	os.WriteFile(filepath.Join(tmpDir, "digest.db"), []byte("db"), 0600)
+	os.WriteFile(filepath.Join(tmpDir, "digest.db-wal"), []byte("wal"), 0600)
+	os.WriteFile(filepath.Join(tmpDir, "digest.db-shm"), []byte("shm"), 0600)
+
+	cfg := &Config{DataDir: tmpDir}
+	if err := cfg.MigrateToProfileLayout(); err != nil {
+		t.Fatalf("MigrateToProfileLayout failed: %v", err)
+	}
+
+	for _, name := range []string{"digest.db", "digest.db-wal", "digest.db-shm"} {
+		path := filepath.Join(tmpDir, "default", name)
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			t.Errorf("expected %s in default/", name)
+		}
+	}
+
+	for _, name := range []string{"digest.db", "digest.db-wal", "digest.db-shm"} {
+		path := filepath.Join(tmpDir, name)
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("expected %s to be removed from root", name)
+		}
+	}
+}
+
+func TestMigrateToProfileLayout_MovesMarkdownFiles(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	os.WriteFile(filepath.Join(tmpDir, "_feeds.yaml"), []byte("feeds"), 0600)
+	feedDir := filepath.Join(tmpDir, "my-feed")
+	os.MkdirAll(feedDir, 0750)
+	os.WriteFile(filepath.Join(feedDir, "entry.md"), []byte("content"), 0600)
+
+	cfg := &Config{DataDir: tmpDir}
+	if err := cfg.MigrateToProfileLayout(); err != nil {
+		t.Fatalf("MigrateToProfileLayout failed: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(tmpDir, "default", "_feeds.yaml")); os.IsNotExist(err) {
+		t.Error("expected _feeds.yaml in default/")
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, "default", "my-feed", "entry.md")); os.IsNotExist(err) {
+		t.Error("expected my-feed/entry.md in default/")
+	}
+
+	if _, err := os.Stat(filepath.Join(tmpDir, "_feeds.yaml")); !os.IsNotExist(err) {
+		t.Error("expected _feeds.yaml to be removed from root")
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, "my-feed")); !os.IsNotExist(err) {
+		t.Error("expected my-feed to be removed from root")
+	}
+}
+
 func TestLoadAutoCreatesValidConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", tmpDir)
