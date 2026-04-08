@@ -173,6 +173,9 @@ func TestRootPersistentFlags(t *testing.T) {
 	if rootCmd.PersistentFlags().Lookup("opml") == nil {
 		t.Error("expected --opml flag to exist")
 	}
+	if rootCmd.PersistentFlags().Lookup("profile") == nil {
+		t.Error("expected --profile flag to exist")
+	}
 }
 
 func TestCommandRegistration(t *testing.T) {
