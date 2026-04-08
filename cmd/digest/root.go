@@ -16,9 +16,10 @@ import (
 )
 
 var (
-	opmlPath string
-	opmlDoc  *opml.Document
-	store    storage.Store
+	opmlPath    string
+	profileName string
+	opmlDoc     *opml.Document
+	store       storage.Store
 )
 
 var rootCmd = &cobra.Command{
@@ -42,19 +43,32 @@ Data stored locally. Configure backend via config.json.`,
 		case "setup", "migrate", "version", "help", "completion":
 			return nil
 		}
-
-		// Set default OPML path if not provided
-		if opmlPath == "" {
-			opmlPath = GetDefaultOPMLPath()
+		// Profile subcommands don't need storage
+		if cmd.Parent() != nil && cmd.Parent().Name() == "profile" {
+			return nil
 		}
 
-		// Load config and open storage via configured backend
+		// Load config and open profile-scoped storage
 		cfg, err := config.Load()
 		if err != nil {
 			return fmt.Errorf("failed to load config: %w", err)
 		}
 
-		store, err = cfg.OpenStorage()
+		// Migrate flat-layout data files into "default" profile subdirectory (idempotent)
+		if err := cfg.MigrateToProfileLayout(); err != nil {
+			return fmt.Errorf("failed to migrate to profile layout: %w", err)
+		}
+
+		// Set default OPML path to profile-scoped directory if not explicitly provided
+		if opmlPath == "" {
+			profileDir, err := cfg.ProfileDataDir(profileName)
+			if err != nil {
+				return fmt.Errorf("invalid profile: %w", err)
+			}
+			opmlPath = filepath.Join(profileDir, "feeds.opml")
+		}
+
+		store, err = cfg.OpenProfileStorage(profileName)
 		if err != nil {
 			return fmt.Errorf("failed to initialize storage: %w", err)
 		}
@@ -86,7 +100,8 @@ func Execute() error {
 }
 
 func init() {
-	rootCmd.PersistentFlags().StringVar(&opmlPath, "opml", "", "OPML file path (default: ~/.local/share/digest/feeds.opml)")
+	rootCmd.PersistentFlags().StringVar(&opmlPath, "opml", "", "OPML file path (default: <data-dir>/<profile>/feeds.opml)")
+	rootCmd.PersistentFlags().StringVarP(&profileName, "profile", "p", "default", "profile name (e.g., work, personal). Profiles keep separate sets of feeds. Omit for default profile")
 }
 
 func saveOPML() error {
@@ -99,9 +114,17 @@ func saveOPML() error {
 	return nil
 }
 
-// GetDefaultOPMLPath returns the default OPML file path.
+// GetDefaultOPMLPath returns the default OPML file path for the default profile.
 func GetDefaultOPMLPath() string {
-	return filepath.Join(getDataDir(), "digest", "feeds.opml")
+	cfg, err := config.Load()
+	if err != nil {
+		return filepath.Join(getDataDir(), "digest", "default", "feeds.opml")
+	}
+	profileDir, err := cfg.ProfileDataDir("default")
+	if err != nil {
+		return filepath.Join(getDataDir(), "digest", "default", "feeds.opml")
+	}
+	return filepath.Join(profileDir, "feeds.opml")
 }
 
 func getDataDir() string {

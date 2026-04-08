@@ -173,6 +173,9 @@ func TestRootPersistentFlags(t *testing.T) {
 	if rootCmd.PersistentFlags().Lookup("opml") == nil {
 		t.Error("expected --opml flag to exist")
 	}
+	if rootCmd.PersistentFlags().Lookup("profile") == nil {
+		t.Error("expected --profile flag to exist")
+	}
 }
 
 func TestCommandRegistration(t *testing.T) {
@@ -194,6 +197,7 @@ func TestCommandRegistration(t *testing.T) {
 		"folder",
 		"version",
 		"install-skill",
+		"profile",
 	}
 
 	for _, expected := range expectedCommands {
@@ -221,6 +225,26 @@ func TestFeedSubcommands(t *testing.T) {
 	for _, expected := range expectedCommands {
 		if !commandNames[expected] {
 			t.Errorf("expected feed subcommand %q to be registered", expected)
+		}
+	}
+}
+
+func TestProfileSubcommands(t *testing.T) {
+	commands := profileCmd.Commands()
+
+	commandNames := make(map[string]bool)
+	for _, cmd := range commands {
+		commandNames[cmd.Name()] = true
+	}
+
+	expectedCommands := []string{
+		"list",
+		"remove",
+	}
+
+	for _, expected := range expectedCommands {
+		if !commandNames[expected] {
+			t.Errorf("expected profile subcommand %q to be registered", expected)
 		}
 	}
 }

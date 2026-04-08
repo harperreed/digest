@@ -104,6 +104,16 @@ func TestGetDataDir_WithXDGDataHome(t *testing.T) {
 	}
 }
 
+func TestProfileFlag(t *testing.T) {
+	flag := rootCmd.PersistentFlags().Lookup("profile")
+	if flag == nil {
+		t.Fatal("expected --profile persistent flag to exist")
+	}
+	if flag.DefValue != "default" {
+		t.Errorf("expected default value 'default', got %q", flag.DefValue)
+	}
+}
+
 // Helper function
 func containsString(s, substr string) bool {
 	for i := 0; i <= len(s)-len(substr); i++ {
