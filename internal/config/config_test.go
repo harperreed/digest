@@ -491,6 +491,104 @@ func TestOpenProfileStorageAutoCreatesDir(t *testing.T) {
 	}
 }
 
+func TestMigrateToProfileLayout_MovesDB(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create flat layout files
+	dbPath := filepath.Join(tmpDir, "digest.db")
+	if err := os.WriteFile(dbPath, []byte("fake db"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	opmlPath := filepath.Join(tmpDir, "feeds.opml")
+	if err := os.WriteFile(opmlPath, []byte("<opml/>"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &Config{DataDir: tmpDir}
+	if err := cfg.MigrateToProfileLayout(); err != nil {
+		t.Fatalf("MigrateToProfileLayout failed: %v", err)
+	}
+
+	// Old files should be gone
+	if _, err := os.Stat(dbPath); !os.IsNotExist(err) {
+		t.Error("expected old digest.db to be removed")
+	}
+	if _, err := os.Stat(opmlPath); !os.IsNotExist(err) {
+		t.Error("expected old feeds.opml to be removed")
+	}
+
+	// New files should exist in default/
+	newDB := filepath.Join(tmpDir, "default", "digest.db")
+	if _, err := os.Stat(newDB); os.IsNotExist(err) {
+		t.Error("expected digest.db in default/")
+	}
+	newOPML := filepath.Join(tmpDir, "default", "feeds.opml")
+	if _, err := os.Stat(newOPML); os.IsNotExist(err) {
+		t.Error("expected feeds.opml in default/")
+	}
+}
+
+func TestMigrateToProfileLayout_NoOpWhenAlreadyMigrated(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create profile layout (default/ already exists)
+	defaultDir := filepath.Join(tmpDir, "default")
+	os.MkdirAll(defaultDir, 0750)
+	os.WriteFile(filepath.Join(defaultDir, "digest.db"), []byte("db"), 0600)
+
+	cfg := &Config{DataDir: tmpDir}
+	if err := cfg.MigrateToProfileLayout(); err != nil {
+		t.Fatalf("MigrateToProfileLayout failed: %v", err)
+	}
+
+	// default/ should still have the db
+	if _, err := os.Stat(filepath.Join(defaultDir, "digest.db")); os.IsNotExist(err) {
+		t.Error("expected digest.db to still be in default/")
+	}
+}
+
+func TestMigrateToProfileLayout_NoOpWhenEmpty(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &Config{DataDir: tmpDir}
+	if err := cfg.MigrateToProfileLayout(); err != nil {
+		t.Fatalf("MigrateToProfileLayout failed: %v", err)
+	}
+
+	// default/ should not be created if there was nothing to migrate
+	defaultDir := filepath.Join(tmpDir, "default")
+	if _, err := os.Stat(defaultDir); !os.IsNotExist(err) {
+		t.Error("expected no default/ directory when nothing to migrate")
+	}
+}
+
+func TestMigrateToProfileLayout_Idempotent(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create flat layout
+	os.WriteFile(filepath.Join(tmpDir, "digest.db"), []byte("fake db"), 0600)
+
+	cfg := &Config{DataDir: tmpDir}
+
+	// Run migration twice
+	if err := cfg.MigrateToProfileLayout(); err != nil {
+		t.Fatalf("first migration failed: %v", err)
+	}
+	if err := cfg.MigrateToProfileLayout(); err != nil {
+		t.Fatalf("second migration failed: %v", err)
+	}
+
+	// Data should still be in default/
+	newDB := filepath.Join(tmpDir, "default", "digest.db")
+	data, err := os.ReadFile(newDB)
+	if err != nil {
+		t.Fatalf("expected digest.db in default/: %v", err)
+	}
+	if string(data) != "fake db" {
+		t.Errorf("unexpected db contents: %q", data)
+	}
+}
+
 func TestLoadAutoCreatesValidConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", tmpDir)

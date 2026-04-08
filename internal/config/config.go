@@ -104,6 +104,56 @@ func (c *Config) OpenProfileStorage(profile string) (storage.Store, error) {
 	}
 }
 
+// MigrateToProfileLayout moves flat-layout data files (digest.db, feeds.opml)
+// from the data dir root into a "default" profile subdirectory.
+// This is a one-time, idempotent migration for upgrading from pre-profile layout.
+func (c *Config) MigrateToProfileLayout() error {
+	dataDir := c.GetDataDir()
+
+	// Check for flat layout files at the root
+	dbPath := filepath.Join(dataDir, "digest.db")
+	opmlPath := filepath.Join(dataDir, "feeds.opml")
+
+	dbExists := fileExists(dbPath)
+	opmlExists := fileExists(opmlPath)
+
+	// Nothing to migrate
+	if !dbExists && !opmlExists {
+		return nil
+	}
+
+	// Create default profile directory
+	defaultDir := filepath.Join(dataDir, "default")
+	if err := os.MkdirAll(defaultDir, 0750); err != nil {
+		return fmt.Errorf("failed to create default profile directory: %w", err)
+	}
+
+	// Move files
+	if dbExists {
+		dst := filepath.Join(defaultDir, "digest.db")
+		if err := os.Rename(dbPath, dst); err != nil {
+			return fmt.Errorf("failed to move digest.db: %w", err)
+		}
+	}
+	if opmlExists {
+		dst := filepath.Join(defaultDir, "feeds.opml")
+		if err := os.Rename(opmlPath, dst); err != nil {
+			return fmt.Errorf("failed to move feeds.opml: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// fileExists checks if a path exists and is a regular file (not a directory).
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return !info.IsDir()
+}
+
 // GetConfigPath returns the config file path.
 func GetConfigPath() string {
 	configDir := os.Getenv("XDG_CONFIG_HOME")
