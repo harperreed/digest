@@ -100,8 +100,8 @@ func Execute() error {
 }
 
 func init() {
-	rootCmd.PersistentFlags().StringVar(&opmlPath, "opml", "", "OPML file path (default: ~/.local/share/digest/feeds.opml)")
-	rootCmd.PersistentFlags().StringVar(&profileName, "profile", "default", "profile name for feed collection isolation")
+	rootCmd.PersistentFlags().StringVar(&opmlPath, "opml", "", "OPML file path (default: <data-dir>/<profile>/feeds.opml)")
+	rootCmd.PersistentFlags().StringVarP(&profileName, "profile", "p", "default", "profile name (e.g., work, personal). Profiles keep separate sets of feeds. Omit for default profile")
 }
 
 func saveOPML() error {

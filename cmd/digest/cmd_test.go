@@ -239,7 +239,7 @@ func TestProfileSubcommands(t *testing.T) {
 
 	expectedCommands := []string{
 		"list",
-		"delete",
+		"remove",
 	}
 
 	for _, expected := range expectedCommands {

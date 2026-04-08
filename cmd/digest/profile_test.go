@@ -1,5 +1,5 @@
 // ABOUTME: Tests for profile management commands
-// ABOUTME: Verifies profile list and delete command structure and flags
+// ABOUTME: Verifies profile list and remove command structure and flags
 
 package main
 
@@ -22,8 +22,8 @@ func TestProfileListCommand(t *testing.T) {
 	}
 }
 
-func TestProfileDeleteCommand(t *testing.T) {
-	if profileDeleteCmd.Use != "delete <name>" {
-		t.Errorf("expected Use to be 'delete <name>', got %q", profileDeleteCmd.Use)
+func TestProfileRemoveCommand(t *testing.T) {
+	if profileRemoveCmd.Use != "remove <name>" {
+		t.Errorf("expected Use to be 'remove <name>', got %q", profileRemoveCmd.Use)
 	}
 }

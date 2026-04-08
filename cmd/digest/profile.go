@@ -1,11 +1,12 @@
 // ABOUTME: Profile management commands for isolated feed collections
-// ABOUTME: Handles listing and deleting named profiles
+// ABOUTME: Handles listing and removing named profiles
 
 package main
 
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -65,16 +66,16 @@ var profileListCmd = &cobra.Command{
 	},
 }
 
-var profileDeleteCmd = &cobra.Command{
-	Use:   "delete <name>",
-	Short: "Delete a profile and all its data",
-	Long:  "Delete a profile directory and all feeds, entries, and OPML data within it",
+var profileRemoveCmd = &cobra.Command{
+	Use:   "remove <name>",
+	Short: "Remove a profile and all its data",
+	Long:  "Remove a profile directory and all feeds, entries, and OPML data within it",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
 
-		if name == "default" {
-			return fmt.Errorf("cannot delete the default profile")
+		if strings.EqualFold(name, "default") {
+			return fmt.Errorf("cannot remove the default profile")
 		}
 
 		if err := config.ValidateProfileName(name); err != nil {
@@ -97,7 +98,7 @@ var profileDeleteCmd = &cobra.Command{
 		// Confirmation prompt
 		yes, _ := cmd.Flags().GetBool("yes")
 		if !yes {
-			fmt.Printf("This will permanently delete profile %q and all its data.\n", name)
+			fmt.Printf("This will permanently remove profile %q and all its data.\n", name)
 			fmt.Printf("Directory: %s\n", profileDir)
 			fmt.Print("Are you sure? (y/N): ")
 			var confirm string
@@ -109,10 +110,10 @@ var profileDeleteCmd = &cobra.Command{
 		}
 
 		if err := os.RemoveAll(profileDir); err != nil {
-			return fmt.Errorf("failed to delete profile: %w", err)
+			return fmt.Errorf("failed to remove profile: %w", err)
 		}
 
-		fmt.Printf("Deleted profile: %s\n", name)
+		fmt.Printf("Removed profile: %s\n", name)
 		return nil
 	},
 }
@@ -120,7 +121,7 @@ var profileDeleteCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(profileCmd)
 	profileCmd.AddCommand(profileListCmd)
-	profileCmd.AddCommand(profileDeleteCmd)
+	profileCmd.AddCommand(profileRemoveCmd)
 
-	profileDeleteCmd.Flags().BoolP("yes", "y", false, "skip confirmation prompt")
+	profileRemoveCmd.Flags().BoolP("yes", "y", false, "skip confirmation prompt")
 }
