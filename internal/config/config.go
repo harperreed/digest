@@ -95,11 +95,8 @@ func (c *Config) ProfileDataDir(profile string) (string, error) {
 	return filepath.Join(c.GetDataDir(), profile), nil
 }
 
-// OpenStorage creates a Store implementation based on the configured backend.
-func (c *Config) OpenStorage() (storage.Store, error) {
-	backend := c.GetBackend()
-	dataDir := c.GetDataDir()
-
+// openStore creates a Store for the given backend and data directory.
+func (c *Config) openStore(backend, dataDir string) (storage.Store, error) {
 	switch backend {
 	case "sqlite":
 		dbPath := filepath.Join(dataDir, "digest.db")
@@ -111,6 +108,11 @@ func (c *Config) OpenStorage() (storage.Store, error) {
 	}
 }
 
+// OpenStorage creates a Store implementation based on the configured backend.
+func (c *Config) OpenStorage() (storage.Store, error) {
+	return c.openStore(c.GetBackend(), c.GetDataDir())
+}
+
 // OpenProfileStorage creates a Store for the given profile.
 // The profile's data directory is auto-created if it doesn't exist.
 func (c *Config) OpenProfileStorage(profile string) (storage.Store, error) {
@@ -119,21 +121,11 @@ func (c *Config) OpenProfileStorage(profile string) (storage.Store, error) {
 		return nil, err
 	}
 
-	backend := c.GetBackend()
-
 	if err := os.MkdirAll(profileDir, 0700); err != nil {
 		return nil, fmt.Errorf("failed to create profile directory: %w", err)
 	}
 
-	switch backend {
-	case "sqlite":
-		dbPath := filepath.Join(profileDir, "digest.db")
-		return storage.NewSQLiteStore(dbPath)
-	case "markdown":
-		return storage.NewMarkdownStore(profileDir)
-	default:
-		return nil, fmt.Errorf("unknown backend: %q", backend)
-	}
+	return c.openStore(c.GetBackend(), profileDir)
 }
 
 // MigrateToProfileLayout moves flat-layout data files (digest.db, feeds.opml)
