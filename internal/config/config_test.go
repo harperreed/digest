@@ -9,6 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/harper/digest/internal/models"
 )
 
 func TestGetConfigPath(t *testing.T) {
@@ -586,6 +589,62 @@ func TestMigrateToProfileLayout_Idempotent(t *testing.T) {
 	}
 	if string(data) != "fake db" {
 		t.Errorf("unexpected db contents: %q", data)
+	}
+}
+
+func TestProfileIsolation(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := &Config{Backend: "sqlite", DataDir: tmpDir}
+
+	// Open two different profile stores
+	workStore, err := cfg.OpenProfileStorage("work")
+	if err != nil {
+		t.Fatalf("failed to open work profile: %v", err)
+	}
+	defer workStore.Close()
+
+	personalStore, err := cfg.OpenProfileStorage("personal")
+	if err != nil {
+		t.Fatalf("failed to open personal profile: %v", err)
+	}
+	defer personalStore.Close()
+
+	// Verify separate directories
+	workDir := filepath.Join(tmpDir, "work")
+	personalDir := filepath.Join(tmpDir, "personal")
+
+	if _, err := os.Stat(filepath.Join(workDir, "digest.db")); os.IsNotExist(err) {
+		t.Error("expected work/digest.db")
+	}
+	if _, err := os.Stat(filepath.Join(personalDir, "digest.db")); os.IsNotExist(err) {
+		t.Error("expected personal/digest.db")
+	}
+
+	// Create a feed in work profile
+	feed := &models.Feed{
+		ID:        "test-feed-1",
+		URL:       "https://example.com/feed.xml",
+		CreatedAt: time.Now(),
+	}
+	if err := workStore.CreateFeed(feed); err != nil {
+		t.Fatalf("failed to create feed in work: %v", err)
+	}
+
+	// Verify feed exists in work but not in personal
+	workFeeds, err := workStore.ListFeeds()
+	if err != nil {
+		t.Fatalf("failed to list work feeds: %v", err)
+	}
+	if len(workFeeds) != 1 {
+		t.Errorf("expected 1 work feed, got %d", len(workFeeds))
+	}
+
+	personalFeeds, err := personalStore.ListFeeds()
+	if err != nil {
+		t.Fatalf("failed to list personal feeds: %v", err)
+	}
+	if len(personalFeeds) != 0 {
+		t.Errorf("expected 0 personal feeds, got %d", len(personalFeeds))
 	}
 }
 
