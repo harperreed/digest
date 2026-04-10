@@ -19,7 +19,9 @@ var mcpCmd = &cobra.Command{
 This allows AI agents like Claude to interact with your RSS feeds,
 query entries, manage subscriptions, and more through structured tools.
 
-The server communicates via JSON-RPC on stdin/stdout.`,
+The server communicates via JSON-RPC on stdin/stdout.
+Supports --profile / -p to set the default profile for the session.
+All tools accept an optional "profile" parameter to target a different profile per call.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Create MCP server with config and default profile
 		server, err := mcp.NewServer(cfg, profileName)
