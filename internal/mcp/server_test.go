@@ -11,11 +11,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/harper/digest/internal/config"
+	"github.com/harper/digest/internal/opml"
 	"github.com/harper/digest/internal/storage"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/require"
@@ -3036,4 +3038,88 @@ func TestResourceEntriesWithAllFields(t *testing.T) {
 	if !strings.Contains(respStr, "all-fields") {
 		t.Errorf("expected link in response")
 	}
+}
+
+func TestProfileParameterIsolation(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{Backend: "sqlite", DataDir: tmpDir}
+
+	// Create two profile directories with OPML
+	for _, name := range []string{"default", "work"} {
+		dir := filepath.Join(tmpDir, name)
+		require.NoError(t, os.MkdirAll(dir, 0700))
+		doc := opml.NewDocument("test")
+		require.NoError(t, doc.WriteFile(filepath.Join(dir, "feeds.opml")))
+	}
+
+	s, err := NewServer(cfg, "default")
+	require.NoError(t, err)
+	defer s.Close()
+
+	// Add a feed to the "work" profile
+	addReq := mcp.CallToolRequest{}
+	addReq.Params.Name = "add_feed"
+	addReq.Params.Arguments = map[string]interface{}{
+		"url":     "https://work.example.com/feed.xml",
+		"title":   "Work Feed",
+		"profile": "work",
+	}
+
+	result, err := s.handleAddFeed(context.Background(), addReq)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	// List feeds on default profile — should be empty
+	listDefault := mcp.CallToolRequest{}
+	listDefault.Params.Name = "list_feeds"
+	listDefault.Params.Arguments = map[string]interface{}{}
+
+	defaultResult, err := s.handleListFeeds(context.Background(), listDefault)
+	require.NoError(t, err)
+	var defaultOutput ListFeedsOutput
+	text := defaultResult.Content[0].(mcp.TextContent).Text
+	require.NoError(t, json.Unmarshal([]byte(text), &defaultOutput))
+	require.Equal(t, 0, defaultOutput.Count, "default profile should have no feeds")
+
+	// List feeds on work profile — should have the feed we added
+	listWork := mcp.CallToolRequest{}
+	listWork.Params.Name = "list_feeds"
+	listWork.Params.Arguments = map[string]interface{}{
+		"profile": "work",
+	}
+
+	workResult, err := s.handleListFeeds(context.Background(), listWork)
+	require.NoError(t, err)
+	var workOutput ListFeedsOutput
+	text = workResult.Content[0].(mcp.TextContent).Text
+	require.NoError(t, json.Unmarshal([]byte(text), &workOutput))
+	require.Equal(t, 1, workOutput.Count, "work profile should have one feed")
+	require.Equal(t, "https://work.example.com/feed.xml", workOutput.Feeds[0].URL)
+}
+
+func TestInvalidProfileNameReturnsError(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{Backend: "sqlite", DataDir: tmpDir}
+
+	defaultDir := filepath.Join(tmpDir, "default")
+	require.NoError(t, os.MkdirAll(defaultDir, 0700))
+	doc := opml.NewDocument("test")
+	require.NoError(t, doc.WriteFile(filepath.Join(defaultDir, "feeds.opml")))
+
+	s, err := NewServer(cfg, "default")
+	require.NoError(t, err)
+	defer s.Close()
+
+	// Try to list feeds with path traversal profile
+	listReq := mcp.CallToolRequest{}
+	listReq.Params.Name = "list_feeds"
+	listReq.Params.Arguments = map[string]interface{}{
+		"profile": "../../../etc",
+	}
+
+	_, err = s.handleListFeeds(context.Background(), listReq)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid profile name")
 }
