@@ -21,8 +21,12 @@ query entries, manage subscriptions, and more through structured tools.
 
 The server communicates via JSON-RPC on stdin/stdout.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// Create MCP server with storage and OPML context
-		server := mcp.NewServer(store, opmlDoc, opmlPath)
+		// Create MCP server with config and default profile
+		server, err := mcp.NewServer(cfg, profileName)
+		if err != nil {
+			return fmt.Errorf("failed to create MCP server: %w", err)
+		}
+		defer server.Close()
 
 		// Start serving on stdio
 		if err := server.ServeStdio(); err != nil {
