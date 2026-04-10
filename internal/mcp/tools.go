@@ -8,8 +8,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"os"
 	"time"
 
+	"github.com/harper/digest/internal/config"
 	"github.com/harper/digest/internal/content"
 	"github.com/harper/digest/internal/fetch"
 	"github.com/harper/digest/internal/models"
@@ -155,6 +157,38 @@ type GetEntryOutput struct {
 	CreatedAt   time.Time  `json:"created_at"`
 }
 
+type ProfileInfo struct {
+	Name      string `json:"name"`
+	IsDefault bool   `json:"is_default"`
+}
+
+type ListProfilesOutput struct {
+	Profiles []ProfileInfo `json:"profiles"`
+	Count    int           `json:"count"`
+	Default  string        `json:"default"`
+}
+
+// profileProperty is the shared schema for the optional profile parameter on all tools.
+var profileProperty = map[string]interface{}{
+	"type":        "string",
+	"description": "Target profile name. Defaults to the server's startup profile if omitted.",
+}
+
+// extractProfile returns the profile name from the request arguments,
+// or empty string if not specified (which resolves to default).
+func extractProfile(req mcp.CallToolRequest) string {
+	args := req.GetArguments()
+	if args == nil {
+		return ""
+	}
+	if p, ok := args["profile"]; ok {
+		if s, ok := p.(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
 // Tool registration
 
 func (s *Server) registerTools() {
@@ -168,6 +202,7 @@ func (s *Server) registerTools() {
 	s.registerMarkReadTool()
 	s.registerMarkUnreadTool()
 	s.registerBulkMarkReadTool()
+	s.registerListProfilesTool()
 }
 
 func (s *Server) registerListFeedsTool() {
@@ -175,8 +210,10 @@ func (s *Server) registerListFeedsTool() {
 		Name:        "list_feeds",
 		Description: "Retrieve all RSS/Atom feeds from the OPML subscription list. Returns a complete list of feeds with their metadata including URLs, titles, folders, last fetch times, and error states. Use this to see all subscribed feeds before performing other operations.",
 		InputSchema: mcp.ToolInputSchema{
-			Type:       "object",
-			Properties: map[string]interface{}{},
+			Type: "object",
+			Properties: map[string]interface{}{
+				"profile": profileProperty,
+			},
 		},
 	}
 	s.mcpServer.AddTool(tool, s.handleListFeeds)
@@ -205,6 +242,7 @@ func (s *Server) registerAddFeedTool() {
 					"type":        "boolean",
 					"description": "If true, allows fetching from local network (private IP) addresses. Use for feeds hosted on LAN servers. Default: false",
 				},
+				"profile": profileProperty,
 			},
 			Required: []string{"url"},
 		},
@@ -223,6 +261,7 @@ func (s *Server) registerRemoveFeedTool() {
 					"type":        "string",
 					"description": "The feed URL to remove. Must match exactly. Example: 'https://example.com/feed.xml'",
 				},
+				"profile": profileProperty,
 			},
 			Required: []string{"url"},
 		},
@@ -245,6 +284,7 @@ func (s *Server) registerMoveFeedTool() {
 					"type":        "string",
 					"description": "Target folder name. Use empty string '' to move to root level. Example: 'Tech Blogs'",
 				},
+				"profile": profileProperty,
 			},
 			Required: []string{"url", "folder"},
 		},
@@ -267,6 +307,7 @@ func (s *Server) registerSyncFeedsTool() {
 					"type":        "boolean",
 					"description": "If true, ignores HTTP cache headers and forces a fresh fetch. Default: false",
 				},
+				"profile": profileProperty,
 			},
 		},
 	}
@@ -304,6 +345,7 @@ func (s *Server) registerListEntriesTool() {
 					"type":        "integer",
 					"description": "Number of entries to skip for pagination. Use with limit for paging through results. Example: 20 to skip first 20 entries",
 				},
+				"profile": profileProperty,
 			},
 		},
 	}
@@ -321,6 +363,7 @@ func (s *Server) registerGetEntryTool() {
 					"type":        "string",
 					"description": "The entry ID or ID prefix. Example: 'abc12345' (prefix) or 'abc12345-1234-1234-1234-123456789abc' (full)",
 				},
+				"profile": profileProperty,
 			},
 			Required: []string{"entry_id"},
 		},
@@ -339,6 +382,7 @@ func (s *Server) registerMarkReadTool() {
 					"type":        "string",
 					"description": "The entry ID to mark as read. Example: 'abc12345-1234-1234-1234-123456789abc'",
 				},
+				"profile": profileProperty,
 			},
 			Required: []string{"entry_id"},
 		},
@@ -357,6 +401,7 @@ func (s *Server) registerMarkUnreadTool() {
 					"type":        "string",
 					"description": "The entry ID to mark as unread. Example: 'abc12345-1234-1234-1234-123456789abc'",
 				},
+				"profile": profileProperty,
 			},
 			Required: []string{"entry_id"},
 		},
@@ -375,6 +420,7 @@ func (s *Server) registerBulkMarkReadTool() {
 					"type":        "string",
 					"description": "Mark entries published before this date/period as read. Accepts: 'yesterday', 'week', 'month', or YYYY-MM-DD. Example: 'yesterday' or '2024-01-15'",
 				},
+				"profile": profileProperty,
 			},
 			Required: []string{"before"},
 		},
@@ -382,17 +428,34 @@ func (s *Server) registerBulkMarkReadTool() {
 	s.mcpServer.AddTool(tool, s.handleBulkMarkRead)
 }
 
+func (s *Server) registerListProfilesTool() {
+	tool := mcp.Tool{
+		Name:        "list_profiles",
+		Description: "List available feed profiles. Profiles are isolated collections of feeds and entries. Returns profile names and which is the current default.",
+		InputSchema: mcp.ToolInputSchema{
+			Type:       "object",
+			Properties: map[string]interface{}{},
+		},
+	}
+	s.mcpServer.AddTool(tool, s.handleListProfiles)
+}
+
 // Handler implementations
 
 func (s *Server) handleListFeeds(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	pc, err := s.getProfile(extractProfile(req))
+	if err != nil {
+		return nil, err
+	}
+
 	// Get all feeds from OPML
-	s.opmlMu.RLock()
-	opmlFeeds := s.opmlDoc.AllFeeds()
-	folders := s.opmlDoc.Folders()
-	s.opmlMu.RUnlock()
+	pc.opmlMu.RLock()
+	opmlFeeds := pc.opmlDoc.AllFeeds()
+	folders := pc.opmlDoc.Folders()
+	pc.opmlMu.RUnlock()
 
 	// Get all feeds from storage
-	storedFeeds, err := s.store.ListFeeds()
+	storedFeeds, err := pc.store.ListFeeds()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list feeds: %w", err)
 	}
@@ -444,6 +507,11 @@ func (s *Server) handleListFeeds(_ context.Context, req mcp.CallToolRequest) (*m
 }
 
 func (s *Server) handleAddFeed(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	pc, err := s.getProfile(extractProfile(req))
+	if err != nil {
+		return nil, err
+	}
+
 	var input AddFeedInput
 	if err := req.BindArguments(&input); err != nil {
 		return nil, fmt.Errorf("invalid input: %w", err)
@@ -462,7 +530,7 @@ func (s *Server) handleAddFeed(_ context.Context, req mcp.CallToolRequest) (*mcp
 	}
 
 	// Check if feed already exists
-	existingFeed, err := s.store.GetFeedByURL(input.URL)
+	existingFeed, err := pc.store.GetFeedByURL(input.URL)
 	if err == nil && existingFeed != nil {
 		return nil, fmt.Errorf("feed already exists: %s", input.URL)
 	}
@@ -476,7 +544,7 @@ func (s *Server) handleAddFeed(_ context.Context, req mcp.CallToolRequest) (*mcp
 		feed.LocalNetwork = true
 	}
 
-	if err := s.store.CreateFeed(feed); err != nil {
+	if err := pc.store.CreateFeed(feed); err != nil {
 		return nil, fmt.Errorf("failed to create feed: %w", err)
 	}
 
@@ -490,18 +558,18 @@ func (s *Server) handleAddFeed(_ context.Context, req mcp.CallToolRequest) (*mcp
 		folder = *input.Folder
 	}
 
-	s.opmlMu.Lock()
-	if err := s.opmlDoc.AddFeed(input.URL, title, folder); err != nil {
-		s.opmlMu.Unlock()
+	pc.opmlMu.Lock()
+	if err := pc.opmlDoc.AddFeed(input.URL, title, folder); err != nil {
+		pc.opmlMu.Unlock()
 		return nil, fmt.Errorf("failed to add feed to OPML: %w", err)
 	}
 
 	// Write OPML back to file
-	if err := s.opmlDoc.WriteFile(s.opmlPath); err != nil {
-		s.opmlMu.Unlock()
+	if err := pc.opmlDoc.WriteFile(pc.opmlPath); err != nil {
+		pc.opmlMu.Unlock()
 		return nil, fmt.Errorf("failed to write OPML file: %w", err)
 	}
-	s.opmlMu.Unlock()
+	pc.opmlMu.Unlock()
 
 	output := FeedOutput{
 		ID:           feed.ID,
@@ -522,35 +590,40 @@ func (s *Server) handleAddFeed(_ context.Context, req mcp.CallToolRequest) (*mcp
 }
 
 func (s *Server) handleRemoveFeed(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	pc, err := s.getProfile(extractProfile(req))
+	if err != nil {
+		return nil, err
+	}
+
 	var input RemoveFeedInput
 	if err := req.BindArguments(&input); err != nil {
 		return nil, fmt.Errorf("invalid input: %w", err)
 	}
 
 	// Get feed to get ID
-	feed, err := s.store.GetFeedByURL(input.URL)
+	feed, err := pc.store.GetFeedByURL(input.URL)
 	if err != nil {
 		return nil, fmt.Errorf("feed not found: %s", input.URL)
 	}
 
 	// Delete from storage (cascade deletes entries)
-	if err := s.store.DeleteFeed(feed.ID); err != nil {
+	if err := pc.store.DeleteFeed(feed.ID); err != nil {
 		return nil, fmt.Errorf("failed to delete feed: %w", err)
 	}
 
 	// Remove from OPML
-	s.opmlMu.Lock()
-	if err := s.opmlDoc.RemoveFeed(input.URL); err != nil {
-		s.opmlMu.Unlock()
+	pc.opmlMu.Lock()
+	if err := pc.opmlDoc.RemoveFeed(input.URL); err != nil {
+		pc.opmlMu.Unlock()
 		return nil, fmt.Errorf("failed to remove feed from OPML: %w", err)
 	}
 
 	// Write OPML back to file
-	if err := s.opmlDoc.WriteFile(s.opmlPath); err != nil {
-		s.opmlMu.Unlock()
+	if err := pc.opmlDoc.WriteFile(pc.opmlPath); err != nil {
+		pc.opmlMu.Unlock()
 		return nil, fmt.Errorf("failed to write OPML file: %w", err)
 	}
-	s.opmlMu.Unlock()
+	pc.opmlMu.Unlock()
 
 	output := RemoveFeedOutput{
 		Success: true,
@@ -567,6 +640,11 @@ func (s *Server) handleRemoveFeed(_ context.Context, req mcp.CallToolRequest) (*
 }
 
 func (s *Server) handleMoveFeed(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	pc, err := s.getProfile(extractProfile(req))
+	if err != nil {
+		return nil, err
+	}
+
 	var input MoveFeedInput
 	if err := req.BindArguments(&input); err != nil {
 		return nil, fmt.Errorf("invalid input: %w", err)
@@ -585,22 +663,22 @@ func (s *Server) handleMoveFeed(_ context.Context, req mcp.CallToolRequest) (*mc
 	}
 
 	// Verify feed exists
-	if _, err := s.store.GetFeedByURL(input.URL); err != nil {
+	if _, err := pc.store.GetFeedByURL(input.URL); err != nil {
 		return nil, fmt.Errorf("feed not found: %s", input.URL)
 	}
 
 	// Find current folder for the feed
-	s.opmlMu.RLock()
+	pc.opmlMu.RLock()
 	oldFolder := ""
 	found := false
-	for _, feed := range s.opmlDoc.AllFeeds() {
+	for _, feed := range pc.opmlDoc.AllFeeds() {
 		if feed.URL == input.URL {
 			oldFolder = feed.Folder
 			found = true
 			break
 		}
 	}
-	s.opmlMu.RUnlock()
+	pc.opmlMu.RUnlock()
 
 	if !found {
 		return nil, fmt.Errorf("feed not found in OPML: %s", input.URL)
@@ -623,18 +701,18 @@ func (s *Server) handleMoveFeed(_ context.Context, req mcp.CallToolRequest) (*mc
 	}
 
 	// Move the feed
-	s.opmlMu.Lock()
-	if err := s.opmlDoc.MoveFeed(input.URL, input.Folder); err != nil {
-		s.opmlMu.Unlock()
+	pc.opmlMu.Lock()
+	if err := pc.opmlDoc.MoveFeed(input.URL, input.Folder); err != nil {
+		pc.opmlMu.Unlock()
 		return nil, fmt.Errorf("failed to move feed: %w", err)
 	}
 
 	// Write OPML back to file
-	if err := s.opmlDoc.WriteFile(s.opmlPath); err != nil {
-		s.opmlMu.Unlock()
+	if err := pc.opmlDoc.WriteFile(pc.opmlPath); err != nil {
+		pc.opmlMu.Unlock()
 		return nil, fmt.Errorf("failed to write OPML file: %w", err)
 	}
-	s.opmlMu.Unlock()
+	pc.opmlMu.Unlock()
 
 	output := MoveFeedOutput{
 		Success:   true,
@@ -653,6 +731,11 @@ func (s *Server) handleMoveFeed(_ context.Context, req mcp.CallToolRequest) (*mc
 }
 
 func (s *Server) handleSyncFeeds(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	pc, err := s.getProfile(extractProfile(req))
+	if err != nil {
+		return nil, err
+	}
+
 	var input SyncFeedsInput
 	if err := req.BindArguments(&input); err != nil {
 		return nil, fmt.Errorf("invalid input: %w", err)
@@ -664,7 +747,7 @@ func (s *Server) handleSyncFeeds(ctx context.Context, req mcp.CallToolRequest) (
 	}
 
 	// Get feeds to sync
-	feeds, err := s.store.ListFeeds()
+	feeds, err := pc.store.ListFeeds()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list feeds: %w", err)
 	}
@@ -705,7 +788,7 @@ func (s *Server) handleSyncFeeds(ctx context.Context, req mcp.CallToolRequest) (
 			}(),
 		}
 
-		newCount, wasCached, err := s.syncFeed(ctx, feed, force)
+		newCount, wasCached, err := s.syncFeed(ctx, pc.store, feed, force)
 		if err != nil {
 			errMsg := err.Error()
 			result.Error = &errMsg
@@ -739,6 +822,11 @@ func (s *Server) handleSyncFeeds(ctx context.Context, req mcp.CallToolRequest) (
 }
 
 func (s *Server) handleListEntries(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	pc, err := s.getProfile(extractProfile(req))
+	if err != nil {
+		return nil, err
+	}
+
 	var input ListEntriesInput
 	if err := req.BindArguments(&input); err != nil {
 		return nil, fmt.Errorf("invalid input: %w", err)
@@ -777,7 +865,7 @@ func (s *Server) handleListEntries(_ context.Context, req mcp.CallToolRequest) (
 		Offset:     input.Offset,
 	}
 
-	entries, err := s.store.ListEntries(filter)
+	entries, err := pc.store.ListEntries(filter)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list entries: %w", err)
 	}
@@ -834,23 +922,28 @@ func (s *Server) handleListEntries(_ context.Context, req mcp.CallToolRequest) (
 }
 
 func (s *Server) handleGetEntry(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	pc, err := s.getProfile(extractProfile(req))
+	if err != nil {
+		return nil, err
+	}
+
 	var input GetEntryInput
 	if err := req.BindArguments(&input); err != nil {
 		return nil, fmt.Errorf("invalid input: %w", err)
 	}
 
 	// Get entry by ID or prefix
-	entry, err := s.store.GetEntry(input.EntryID)
+	entry, err := pc.store.GetEntry(input.EntryID)
 	if err != nil {
 		// Try prefix match
-		entry, err = s.store.GetEntryByPrefix(input.EntryID)
+		entry, err = pc.store.GetEntryByPrefix(input.EntryID)
 		if err != nil {
 			return nil, fmt.Errorf("entry not found: %s", input.EntryID)
 		}
 	}
 
 	// Get feed for context
-	feed, err := s.store.GetFeed(entry.FeedID)
+	feed, err := pc.store.GetFeed(entry.FeedID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get feed: %w", err)
 	}
@@ -890,23 +983,28 @@ func (s *Server) handleGetEntry(_ context.Context, req mcp.CallToolRequest) (*mc
 }
 
 func (s *Server) handleMarkRead(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	pc, err := s.getProfile(extractProfile(req))
+	if err != nil {
+		return nil, err
+	}
+
 	var input MarkReadInput
 	if err := req.BindArguments(&input); err != nil {
 		return nil, fmt.Errorf("invalid input: %w", err)
 	}
 
 	// Verify entry exists
-	if _, err := s.store.GetEntry(input.EntryID); err != nil {
+	if _, err := pc.store.GetEntry(input.EntryID); err != nil {
 		return nil, fmt.Errorf("entry not found: %s", input.EntryID)
 	}
 
 	// Mark as read
-	if err := s.store.MarkEntryRead(input.EntryID); err != nil {
+	if err := pc.store.MarkEntryRead(input.EntryID); err != nil {
 		return nil, fmt.Errorf("failed to mark entry as read: %w", err)
 	}
 
 	// Reload entry to get updated read_at
-	entry, err := s.store.GetEntry(input.EntryID)
+	entry, err := pc.store.GetEntry(input.EntryID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to reload entry: %w", err)
 	}
@@ -932,23 +1030,28 @@ func (s *Server) handleMarkRead(_ context.Context, req mcp.CallToolRequest) (*mc
 }
 
 func (s *Server) handleMarkUnread(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	pc, err := s.getProfile(extractProfile(req))
+	if err != nil {
+		return nil, err
+	}
+
 	var input MarkUnreadInput
 	if err := req.BindArguments(&input); err != nil {
 		return nil, fmt.Errorf("invalid input: %w", err)
 	}
 
 	// Verify entry exists
-	if _, err := s.store.GetEntry(input.EntryID); err != nil {
+	if _, err := pc.store.GetEntry(input.EntryID); err != nil {
 		return nil, fmt.Errorf("entry not found: %s", input.EntryID)
 	}
 
 	// Mark as unread
-	if err := s.store.MarkEntryUnread(input.EntryID); err != nil {
+	if err := pc.store.MarkEntryUnread(input.EntryID); err != nil {
 		return nil, fmt.Errorf("failed to mark entry as unread: %w", err)
 	}
 
 	// Reload entry to get updated state
-	entry, err := s.store.GetEntry(input.EntryID)
+	entry, err := pc.store.GetEntry(input.EntryID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to reload entry: %w", err)
 	}
@@ -975,7 +1078,7 @@ func (s *Server) handleMarkUnread(_ context.Context, req mcp.CallToolRequest) (*
 
 // syncFeed is a helper that fetches and processes a single feed
 // Returns (newCount, wasCached, error)
-func (s *Server) syncFeed(ctx context.Context, feed *models.Feed, force bool) (int, bool, error) {
+func (s *Server) syncFeed(ctx context.Context, store storage.Store, feed *models.Feed, force bool) (int, bool, error) {
 	// Get cache headers from feed (skip if force)
 	var etag, lastModified *string
 	if !force {
@@ -987,7 +1090,7 @@ func (s *Server) syncFeed(ctx context.Context, feed *models.Feed, force bool) (i
 	result, err := fetch.Fetch(ctx, feed.URL, etag, lastModified, feed.LocalNetwork)
 	if err != nil {
 		// Update error state
-		if updateErr := s.store.UpdateFeedError(feed.ID, err.Error()); updateErr != nil {
+		if updateErr := store.UpdateFeedError(feed.ID, err.Error()); updateErr != nil {
 			return 0, false, fmt.Errorf("fetch failed (%v) and error update failed: %w", err, updateErr)
 		}
 		return 0, false, err
@@ -1002,7 +1105,7 @@ func (s *Server) syncFeed(ctx context.Context, feed *models.Feed, force bool) (i
 	parsed, err := parse.Parse(result.Body)
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to parse feed: %v", err)
-		if updateErr := s.store.UpdateFeedError(feed.ID, errMsg); updateErr != nil {
+		if updateErr := store.UpdateFeedError(feed.ID, errMsg); updateErr != nil {
 			return 0, false, fmt.Errorf("parse failed (%v) and error update failed: %w", err, updateErr)
 		}
 		return 0, false, fmt.Errorf("failed to parse feed: %w", err)
@@ -1019,7 +1122,7 @@ func (s *Server) syncFeed(ctx context.Context, feed *models.Feed, force bool) (i
 	newCount := 0
 	for _, parsedEntry := range parsed.Entries {
 		// Check if entry already exists
-		exists, err := s.store.EntryExists(feed.ID, parsedEntry.GUID)
+		exists, err := store.EntryExists(feed.ID, parsedEntry.GUID)
 		if err != nil {
 			return newCount, false, fmt.Errorf("failed to check entry existence: %w", err)
 		}
@@ -1035,7 +1138,7 @@ func (s *Server) syncFeed(ctx context.Context, feed *models.Feed, force bool) (i
 		entry.PublishedAt = parsedEntry.PublishedAt
 		entry.Content = &parsedEntry.Content
 
-		if err := s.store.CreateEntry(entry); err != nil {
+		if err := store.CreateEntry(entry); err != nil {
 			return newCount, false, fmt.Errorf("failed to create entry: %w", err)
 		}
 
@@ -1044,13 +1147,13 @@ func (s *Server) syncFeed(ctx context.Context, feed *models.Feed, force bool) (i
 
 	// Update feed fetch state
 	fetchedAt := time.Now()
-	if err := s.store.UpdateFeedFetchState(feed.ID, &result.ETag, &result.LastModified, fetchedAt); err != nil {
+	if err := store.UpdateFeedFetchState(feed.ID, &result.ETag, &result.LastModified, fetchedAt); err != nil {
 		return newCount, false, fmt.Errorf("failed to update feed state: %w", err)
 	}
 
 	// If title was updated, persist
 	if titleUpdated {
-		if err := s.store.UpdateFeed(feed); err != nil {
+		if err := store.UpdateFeed(feed); err != nil {
 			return newCount, false, fmt.Errorf("failed to update feed title: %w", err)
 		}
 	}
@@ -1059,6 +1162,11 @@ func (s *Server) syncFeed(ctx context.Context, feed *models.Feed, force bool) (i
 }
 
 func (s *Server) handleBulkMarkRead(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	pc, err := s.getProfile(extractProfile(req))
+	if err != nil {
+		return nil, err
+	}
+
 	var input BulkMarkReadInput
 	if err := req.BindArguments(&input); err != nil {
 		return nil, fmt.Errorf("invalid input: %w", err)
@@ -1071,7 +1179,7 @@ func (s *Server) handleBulkMarkRead(_ context.Context, req mcp.CallToolRequest) 
 	}
 
 	// Mark entries as read
-	count, err := s.store.MarkEntriesReadBefore(cutoff)
+	count, err := pc.store.MarkEntriesReadBefore(cutoff)
 	if err != nil {
 		return nil, fmt.Errorf("failed to mark entries as read: %w", err)
 	}
@@ -1121,4 +1229,40 @@ func formatFolder(folder string) string {
 		return "root level"
 	}
 	return fmt.Sprintf("'%s'", folder)
+}
+
+func (s *Server) handleListProfiles(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	dataDir := s.cfg.GetDataDir()
+	entries, err := os.ReadDir(dataDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read data directory: %w", err)
+	}
+
+	profiles := make([]ProfileInfo, 0)
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if err := config.ValidateProfileName(name); err != nil {
+			continue
+		}
+		profiles = append(profiles, ProfileInfo{
+			Name:      name,
+			IsDefault: name == s.defaultProfile,
+		})
+	}
+
+	output := ListProfilesOutput{
+		Profiles: profiles,
+		Count:    len(profiles),
+		Default:  s.defaultProfile,
+	}
+
+	jsonBytes, err := json.MarshalIndent(output, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal output: %w", err)
+	}
+
+	return mcp.NewToolResultText(string(jsonBytes)), nil
 }

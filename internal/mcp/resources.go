@@ -50,7 +50,11 @@ func (s *Server) registerFeedsResource() {
 			MIMEType:    "application/json",
 		},
 		func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-			feeds, err := s.store.ListFeeds()
+			pc, err := s.getProfile("")
+			if err != nil {
+				return nil, fmt.Errorf("failed to get profile: %w", err)
+			}
+			feeds, err := pc.store.ListFeeds()
 			if err != nil {
 				return nil, fmt.Errorf("failed to list feeds: %w", err)
 			}
@@ -121,9 +125,13 @@ func (s *Server) registerEntriesUnreadResource() {
 			MIMEType:    "application/json",
 		},
 		func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+			pc, err := s.getProfile("")
+			if err != nil {
+				return nil, fmt.Errorf("failed to get profile: %w", err)
+			}
 			unreadOnly := true
 			filter := &storage.EntryFilter{UnreadOnly: &unreadOnly}
-			entries, err := s.store.ListEntries(filter)
+			entries, err := pc.store.ListEntries(filter)
 			if err != nil {
 				return nil, fmt.Errorf("failed to list unread entries: %w", err)
 			}
@@ -201,11 +209,15 @@ func (s *Server) registerEntriesTodayResource() {
 			MIMEType:    "application/json",
 		},
 		func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+			pc, err := s.getProfile("")
+			if err != nil {
+				return nil, fmt.Errorf("failed to get profile: %w", err)
+			}
 			// Calculate start of today (midnight local time) - consistent with CLI and timeutil
 			startOfDay := timeutil.StartOfToday()
 
 			filter := &storage.EntryFilter{Since: &startOfDay}
-			entries, err := s.store.ListEntries(filter)
+			entries, err := pc.store.ListEntries(filter)
 			if err != nil {
 				return nil, fmt.Errorf("failed to list today's entries: %w", err)
 			}
@@ -283,7 +295,11 @@ func (s *Server) registerStatsResource() {
 			MIMEType:    "application/json",
 		},
 		func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-			stats, err := s.calculateStats()
+			pc, err := s.getProfile("")
+			if err != nil {
+				return nil, fmt.Errorf("failed to get profile: %w", err)
+			}
+			stats, err := s.calculateStats(pc.store)
 			if err != nil {
 				return nil, fmt.Errorf("failed to calculate stats: %w", err)
 			}
@@ -351,9 +367,9 @@ type SyncInfo struct {
 	FeedTitle     string     `json:"feed_title"`
 }
 
-func (s *Server) calculateStats() (*StatsData, error) {
+func (s *Server) calculateStats(store storage.Store) (*StatsData, error) {
 	// Get overall stats
-	overallStats, err := s.store.GetOverallStats()
+	overallStats, err := store.GetOverallStats()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get overall stats: %w", err)
 	}
@@ -365,7 +381,7 @@ func (s *Server) calculateStats() (*StatsData, error) {
 	}
 
 	// Get per-feed stats
-	feedStats, err := s.store.GetFeedStats()
+	feedStats, err := store.GetFeedStats()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get feed stats: %w", err)
 	}

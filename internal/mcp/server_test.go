@@ -16,27 +16,41 @@ import (
 	"testing"
 	"time"
 
+	"github.com/harper/digest/internal/config"
 	"github.com/harper/digest/internal/opml"
 	"github.com/harper/digest/internal/storage"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/require"
 )
 
-// testServer creates a test MCP server with a temp OPML file and test storage.
-// Returns the server, store, and OPML path (path used internally for OPML writes).
+// testServer creates a test MCP server with a temp data directory and initial OPML content.
+// Returns the server, store (from the default profile), and OPML path.
 func testServer(t *testing.T) (*Server, storage.Store, string) { //nolint:unparam
 	t.Helper()
 
-	// Create temp OPML file
-	tmpOPML, err := os.CreateTemp("", "test-*.opml")
+	// Create temp root data directory
+	tmpDir, err := os.MkdirTemp("", "mcp-server-test-*")
 	if err != nil {
-		t.Fatalf("failed to create temp OPML: %v", err)
+		t.Fatalf("failed to create temp dir: %v", err)
 	}
 	t.Cleanup(func() {
-		os.Remove(tmpOPML.Name())
+		os.RemoveAll(tmpDir)
 	})
 
-	// Write initial OPML content
+	// Create config pointing at tmpDir with sqlite backend
+	cfg := &config.Config{
+		Backend: "sqlite",
+		DataDir: tmpDir,
+	}
+
+	// Create the default profile subdirectory
+	defaultDir := tmpDir + "/default"
+	if err := os.MkdirAll(defaultDir, 0700); err != nil {
+		t.Fatalf("failed to create default profile dir: %v", err)
+	}
+
+	// Write initial OPML content for the default profile
+	opmlPath := defaultDir + "/feeds.opml"
 	initialOPML := `<?xml version="1.0" encoding="UTF-8"?>
 <opml version="2.0">
   <head><title>Test Feeds</title></head>
@@ -46,48 +60,26 @@ func testServer(t *testing.T) (*Server, storage.Store, string) { //nolint:unpara
     </outline>
   </body>
 </opml>`
-	if _, err := tmpOPML.WriteString(initialOPML); err != nil {
+	if err := os.WriteFile(opmlPath, []byte(initialOPML), 0600); err != nil {
 		t.Fatalf("failed to write OPML: %v", err)
 	}
-	tmpOPML.Close()
-
-	// Parse OPML
-	opmlDoc, err := opml.ParseFile(tmpOPML.Name())
-	if err != nil {
-		t.Fatalf("failed to parse OPML: %v", err)
-	}
-
-	// Create test storage
-	store := newTestStore(t)
 
 	// Create server
-	s := NewServer(store, opmlDoc, tmpOPML.Name())
-
-	return s, store, tmpOPML.Name()
-}
-
-// newTestStore creates a SQLite store for testing
-func newTestStore(t *testing.T) storage.Store {
-	t.Helper()
-
-	tmpDir, err := os.MkdirTemp("", "mcp-storage-test-*")
+	s, err := NewServer(cfg, "default")
 	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
+		t.Fatalf("NewServer: %v", err)
 	}
 	t.Cleanup(func() {
-		os.RemoveAll(tmpDir)
+		s.Close()
 	})
 
-	dbPath := filepath.Join(tmpDir, "test.db")
-	store, err := storage.NewSQLiteStore(dbPath)
+	// Get the store from the default profile
+	pc, err := s.getProfile("default")
 	if err != nil {
-		t.Fatalf("failed to create store: %v", err)
+		t.Fatalf("getProfile: %v", err)
 	}
-	t.Cleanup(func() {
-		store.Close()
-	})
 
-	return store
+	return s, pc.store, opmlPath
 }
 
 func TestHandleListFeeds(t *testing.T) {
@@ -860,7 +852,7 @@ func TestCalculateStats(t *testing.T) {
 		t.Fatalf("CreateEntry: %v", err)
 	}
 
-	stats, err := s.calculateStats()
+	stats, err := s.calculateStats(store)
 	if err != nil {
 		t.Fatalf("calculateStats: %v", err)
 	}
@@ -966,7 +958,7 @@ func TestCalculateStatsWithUntitledFeed(t *testing.T) {
 		t.Fatalf("CreateFeed: %v", err)
 	}
 
-	stats, err := s.calculateStats()
+	stats, err := s.calculateStats(store)
 	if err != nil {
 		t.Fatalf("calculateStats: %v", err)
 	}
@@ -992,7 +984,7 @@ func TestCalculateStatsNoLastSync(t *testing.T) {
 		t.Fatalf("CreateFeed: %v", err)
 	}
 
-	stats, err := s.calculateStats()
+	stats, err := s.calculateStats(store)
 	if err != nil {
 		t.Fatalf("calculateStats: %v", err)
 	}
@@ -1276,12 +1268,12 @@ func TestHandleSyncFeeds(t *testing.T) {
 
 func TestHandleSyncFeedsNoFeeds(t *testing.T) {
 	// Create server with new store (no feeds)
-	s, _, _ := testServer(t)
+	s, store, _ := testServer(t)
 
 	// Delete the feed that was created by testServer
-	feeds, _ := s.store.ListFeeds()
+	feeds, _ := store.ListFeeds()
 	for _, feed := range feeds {
-		_ = s.store.DeleteFeed(feed.ID)
+		_ = store.DeleteFeed(feed.ID)
 	}
 
 	// Sync with no feeds
@@ -2022,7 +2014,7 @@ func TestCalculateStatsWithMultipleFeeds(t *testing.T) {
 		t.Fatalf("CreateEntry: %v", err)
 	}
 
-	stats, err := s.calculateStats()
+	stats, err := s.calculateStats(store)
 	if err != nil {
 		t.Fatalf("calculateStats: %v", err)
 	}
@@ -2062,7 +2054,7 @@ func TestCalculateStatsFeedWithErrors(t *testing.T) {
 		t.Fatalf("CreateFeed: %v", err)
 	}
 
-	stats, err := s.calculateStats()
+	stats, err := s.calculateStats(store)
 	if err != nil {
 		t.Fatalf("calculateStats: %v", err)
 	}
@@ -2375,7 +2367,7 @@ func TestCalculateStatsReturnStruct(t *testing.T) {
 		t.Fatalf("CreateEntry: %v", err)
 	}
 
-	stats, err := s.calculateStats()
+	stats, err := s.calculateStats(store)
 	if err != nil {
 		t.Fatalf("calculateStats: %v", err)
 	}
@@ -2631,7 +2623,7 @@ func TestSyncFeedWithEntryAllFields(t *testing.T) {
 	}
 
 	// Sync
-	newCount, wasCached, err := s.syncFeed(context.Background(), feed, false)
+	newCount, wasCached, err := s.syncFeed(context.Background(), store, feed, false)
 	if err != nil {
 		t.Fatalf("syncFeed: %v", err)
 	}
@@ -2687,7 +2679,7 @@ func TestSyncFeedWithEmptyTitle(t *testing.T) {
 	}
 
 	// Sync (should update empty title)
-	_, _, err := s.syncFeed(context.Background(), feed, false)
+	_, _, err := s.syncFeed(context.Background(), store, feed, false)
 	if err != nil {
 		t.Fatalf("syncFeed: %v", err)
 	}
@@ -3046,4 +3038,130 @@ func TestResourceEntriesWithAllFields(t *testing.T) {
 	if !strings.Contains(respStr, "all-fields") {
 		t.Errorf("expected link in response")
 	}
+}
+
+func TestProfileParameterIsolation(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{Backend: "sqlite", DataDir: tmpDir}
+
+	// Create two profile directories with OPML
+	for _, name := range []string{"default", "work"} {
+		dir := filepath.Join(tmpDir, name)
+		require.NoError(t, os.MkdirAll(dir, 0700))
+		doc := opml.NewDocument("test")
+		require.NoError(t, doc.WriteFile(filepath.Join(dir, "feeds.opml")))
+	}
+
+	s, err := NewServer(cfg, "default")
+	require.NoError(t, err)
+	defer s.Close()
+
+	// Add a feed to the "work" profile
+	addReq := mcp.CallToolRequest{}
+	addReq.Params.Name = "add_feed"
+	addReq.Params.Arguments = map[string]interface{}{
+		"url":     "https://work.example.com/feed.xml",
+		"title":   "Work Feed",
+		"profile": "work",
+	}
+
+	result, err := s.handleAddFeed(context.Background(), addReq)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	// List feeds on default profile — should be empty
+	listDefault := mcp.CallToolRequest{}
+	listDefault.Params.Name = "list_feeds"
+	listDefault.Params.Arguments = map[string]interface{}{}
+
+	defaultResult, err := s.handleListFeeds(context.Background(), listDefault)
+	require.NoError(t, err)
+	var defaultOutput ListFeedsOutput
+	text := defaultResult.Content[0].(mcp.TextContent).Text
+	require.NoError(t, json.Unmarshal([]byte(text), &defaultOutput))
+	require.Equal(t, 0, defaultOutput.Count, "default profile should have no feeds")
+
+	// List feeds on work profile — should have the feed we added
+	listWork := mcp.CallToolRequest{}
+	listWork.Params.Name = "list_feeds"
+	listWork.Params.Arguments = map[string]interface{}{
+		"profile": "work",
+	}
+
+	workResult, err := s.handleListFeeds(context.Background(), listWork)
+	require.NoError(t, err)
+	var workOutput ListFeedsOutput
+	text = workResult.Content[0].(mcp.TextContent).Text
+	require.NoError(t, json.Unmarshal([]byte(text), &workOutput))
+	require.Equal(t, 1, workOutput.Count, "work profile should have one feed")
+	require.Equal(t, "https://work.example.com/feed.xml", workOutput.Feeds[0].URL)
+}
+
+func TestListProfiles(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{Backend: "sqlite", DataDir: tmpDir}
+
+	// Create 3 profile directories, each with an OPML file so NewServer can load the default
+	profiles := []string{"default", "work", "personal"}
+	for _, p := range profiles {
+		dir := filepath.Join(tmpDir, p)
+		require.NoError(t, os.MkdirAll(dir, 0700))
+		doc := opml.NewDocument(p)
+		require.NoError(t, doc.WriteFile(filepath.Join(dir, "feeds.opml")))
+	}
+
+	// Create a non-profile file to ensure it is excluded from results
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "config.json"), []byte("{}"), 0600))
+
+	s, err := NewServer(cfg, "default")
+	require.NoError(t, err)
+	defer s.Close()
+
+	result, err := s.handleListProfiles(context.Background(), mcp.CallToolRequest{})
+	require.NoError(t, err)
+
+	var output ListProfilesOutput
+	require.NoError(t, json.Unmarshal([]byte(result.Content[0].(mcp.TextContent).Text), &output))
+
+	require.Equal(t, 3, output.Count, "expected 3 profiles")
+	require.Equal(t, "default", output.Default, "expected default profile")
+
+	names := make([]string, 0, len(output.Profiles))
+	for _, p := range output.Profiles {
+		names = append(names, p.Name)
+		if p.Name == "default" {
+			require.True(t, p.IsDefault, "default profile should have IsDefault=true")
+		} else {
+			require.False(t, p.IsDefault, "non-default profile should have IsDefault=false")
+		}
+	}
+	require.ElementsMatch(t, []string{"default", "work", "personal"}, names)
+}
+
+func TestInvalidProfileNameReturnsError(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{Backend: "sqlite", DataDir: tmpDir}
+
+	defaultDir := filepath.Join(tmpDir, "default")
+	require.NoError(t, os.MkdirAll(defaultDir, 0700))
+	doc := opml.NewDocument("test")
+	require.NoError(t, doc.WriteFile(filepath.Join(defaultDir, "feeds.opml")))
+
+	s, err := NewServer(cfg, "default")
+	require.NoError(t, err)
+	defer s.Close()
+
+	// Try to list feeds with path traversal profile
+	listReq := mcp.CallToolRequest{}
+	listReq.Params.Name = "list_feeds"
+	listReq.Params.Arguments = map[string]interface{}{
+		"profile": "../../../etc",
+	}
+
+	_, err = s.handleListFeeds(context.Background(), listReq)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid profile name")
 }

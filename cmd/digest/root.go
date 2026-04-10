@@ -20,6 +20,7 @@ var (
 	profileName string
 	opmlDoc     *opml.Document
 	store       storage.Store
+	cfg         *config.Config
 )
 
 var rootCmd = &cobra.Command{
@@ -49,7 +50,8 @@ Data stored locally. Configure backend via config.json.`,
 		}
 
 		// Load config and open profile-scoped storage
-		cfg, err := config.Load()
+		var err error
+		cfg, err = config.Load()
 		if err != nil {
 			return fmt.Errorf("failed to load config: %w", err)
 		}
