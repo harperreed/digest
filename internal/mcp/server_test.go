@@ -3098,6 +3098,48 @@ func TestProfileParameterIsolation(t *testing.T) {
 	require.Equal(t, "https://work.example.com/feed.xml", workOutput.Feeds[0].URL)
 }
 
+func TestListProfiles(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &config.Config{Backend: "sqlite", DataDir: tmpDir}
+
+	// Create 3 profile directories, each with an OPML file so NewServer can load the default
+	profiles := []string{"default", "work", "personal"}
+	for _, p := range profiles {
+		dir := filepath.Join(tmpDir, p)
+		require.NoError(t, os.MkdirAll(dir, 0700))
+		doc := opml.NewDocument(p)
+		require.NoError(t, doc.WriteFile(filepath.Join(dir, "feeds.opml")))
+	}
+
+	// Create a non-profile file to ensure it is excluded from results
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "config.json"), []byte("{}"), 0600))
+
+	s, err := NewServer(cfg, "default")
+	require.NoError(t, err)
+	defer s.Close()
+
+	result, err := s.handleListProfiles(context.Background(), mcp.CallToolRequest{})
+	require.NoError(t, err)
+
+	var output ListProfilesOutput
+	require.NoError(t, json.Unmarshal([]byte(result.Content[0].(mcp.TextContent).Text), &output))
+
+	require.Equal(t, 3, output.Count, "expected 3 profiles")
+	require.Equal(t, "default", output.Default, "expected default profile")
+
+	names := make([]string, 0, len(output.Profiles))
+	for _, p := range output.Profiles {
+		names = append(names, p.Name)
+		if p.Name == "default" {
+			require.True(t, p.IsDefault, "default profile should have IsDefault=true")
+		} else {
+			require.False(t, p.IsDefault, "non-default profile should have IsDefault=false")
+		}
+	}
+	require.ElementsMatch(t, []string{"default", "work", "personal"}, names)
+}
+
 func TestInvalidProfileNameReturnsError(t *testing.T) {
 	tmpDir := t.TempDir()
 

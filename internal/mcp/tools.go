@@ -8,8 +8,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"os"
 	"time"
 
+	"github.com/harper/digest/internal/config"
 	"github.com/harper/digest/internal/content"
 	"github.com/harper/digest/internal/fetch"
 	"github.com/harper/digest/internal/models"
@@ -155,6 +157,17 @@ type GetEntryOutput struct {
 	CreatedAt   time.Time  `json:"created_at"`
 }
 
+type ProfileInfo struct {
+	Name      string `json:"name"`
+	IsDefault bool   `json:"is_default"`
+}
+
+type ListProfilesOutput struct {
+	Profiles []ProfileInfo `json:"profiles"`
+	Count    int           `json:"count"`
+	Default  string        `json:"default"`
+}
+
 // profileProperty is the shared schema for the optional profile parameter on all tools.
 var profileProperty = map[string]interface{}{
 	"type":        "string",
@@ -189,6 +202,7 @@ func (s *Server) registerTools() {
 	s.registerMarkReadTool()
 	s.registerMarkUnreadTool()
 	s.registerBulkMarkReadTool()
+	s.registerListProfilesTool()
 }
 
 func (s *Server) registerListFeedsTool() {
@@ -412,6 +426,18 @@ func (s *Server) registerBulkMarkReadTool() {
 		},
 	}
 	s.mcpServer.AddTool(tool, s.handleBulkMarkRead)
+}
+
+func (s *Server) registerListProfilesTool() {
+	tool := mcp.Tool{
+		Name:        "list_profiles",
+		Description: "List available feed profiles. Profiles are isolated collections of feeds and entries. Returns profile names and which is the current default.",
+		InputSchema: mcp.ToolInputSchema{
+			Type:       "object",
+			Properties: map[string]interface{}{},
+		},
+	}
+	s.mcpServer.AddTool(tool, s.handleListProfiles)
 }
 
 // Handler implementations
@@ -1203,4 +1229,40 @@ func formatFolder(folder string) string {
 		return "root level"
 	}
 	return fmt.Sprintf("'%s'", folder)
+}
+
+func (s *Server) handleListProfiles(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	dataDir := s.cfg.GetDataDir()
+	entries, err := os.ReadDir(dataDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read data directory: %w", err)
+	}
+
+	profiles := make([]ProfileInfo, 0)
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if err := config.ValidateProfileName(name); err != nil {
+			continue
+		}
+		profiles = append(profiles, ProfileInfo{
+			Name:      name,
+			IsDefault: name == s.defaultProfile,
+		})
+	}
+
+	output := ListProfilesOutput{
+		Profiles: profiles,
+		Count:    len(profiles),
+		Default:  s.defaultProfile,
+	}
+
+	jsonBytes, err := json.MarshalIndent(output, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal output: %w", err)
+	}
+
+	return mcp.NewToolResultText(string(jsonBytes)), nil
 }
