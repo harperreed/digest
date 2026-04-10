@@ -94,8 +94,11 @@ func (s *Server) getProfile(name string) (*profileContext, error) {
 	// Load or create OPML document
 	opmlPath := filepath.Join(profileDir, "feeds.opml")
 	var opmlDoc *opml.Document
-	if _, err := os.Stat(opmlPath); os.IsNotExist(err) {
+	if _, statErr := os.Stat(opmlPath); os.IsNotExist(statErr) {
 		opmlDoc = opml.NewDocument("digest feeds")
+	} else if statErr != nil {
+		store.Close()
+		return nil, fmt.Errorf("failed to stat OPML for profile %q: %w", name, statErr)
 	} else {
 		opmlDoc, err = opml.ParseFile(opmlPath)
 		if err != nil {
@@ -124,6 +127,7 @@ func (s *Server) Close() error {
 			firstErr = fmt.Errorf("failed to close store for profile %q: %w", name, err)
 		}
 	}
+	s.profiles = make(map[string]*profileContext)
 	return firstErr
 }
 
