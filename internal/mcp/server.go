@@ -75,6 +75,15 @@ func (s *Server) getProfile(name string) (*profileContext, error) {
 	defer s.profilesMu.Unlock()
 
 	if pc, ok := s.profiles[name]; ok {
+		// Reload OPML from disk to pick up external changes (CLI, other tools).
+		// OPML files are small so the cost is negligible.
+		pc.opmlMu.Lock()
+		if _, statErr := os.Stat(pc.opmlPath); statErr == nil {
+			if doc, err := opml.ParseFile(pc.opmlPath); err == nil {
+				pc.opmlDoc = doc
+			}
+		}
+		pc.opmlMu.Unlock()
 		return pc, nil
 	}
 
