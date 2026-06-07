@@ -56,6 +56,11 @@ Data stored locally. Configure backend via config.json.`,
 			return fmt.Errorf("failed to load config: %w", err)
 		}
 
+		// Use config's default profile if --profile wasn't explicitly set
+		if !cmd.Flags().Changed("profile") {
+			profileName = cfg.GetDefaultProfile()
+		}
+
 		// Migrate flat-layout data files into "default" profile subdirectory (idempotent)
 		if err := cfg.MigrateToProfileLayout(); err != nil {
 			return fmt.Errorf("failed to migrate to profile layout: %w", err)
