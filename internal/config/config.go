@@ -24,6 +24,9 @@ type Config struct {
 	// SQLite puts digest.db here. Markdown puts _feeds.yaml and feed folders here.
 	// Supports ~ expansion for home directory. Defaults to ~/.local/share/digest.
 	DataDir string `json:"data_dir,omitempty"`
+
+	// DefaultProfile is the profile used when --profile is not specified.
+	DefaultProfile string `json:"default_profile,omitempty"`
 }
 
 // defaultDBFilename is the SQLite database filename used for existing-user detection.
@@ -44,6 +47,14 @@ func (c *Config) GetDataDir() string {
 		return defaultDataDir()
 	}
 	return ExpandPath(c.DataDir)
+}
+
+// GetDefaultProfile returns the configured default profile, defaulting to "default".
+func (c *Config) GetDefaultProfile() string {
+	if c.DefaultProfile == "" {
+		return "default"
+	}
+	return c.DefaultProfile
 }
 
 // ExpandPath expands a leading ~ to the user's home directory.

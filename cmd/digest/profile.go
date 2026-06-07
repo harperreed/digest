@@ -53,11 +53,17 @@ var profileListCmd = &cobra.Command{
 			return nil
 		}
 
+		defaultProfile := cfg.GetDefaultProfile()
 		fmt.Printf("Found %d profile(s):\n\n", len(profiles))
 		for _, name := range profiles {
-			if name == profileName {
+			switch {
+			case name == profileName && name == defaultProfile:
+				fmt.Printf("* %s (active, default)\n", name)
+			case name == profileName:
 				fmt.Printf("* %s (active)\n", name)
-			} else {
+			case name == defaultProfile:
+				fmt.Printf("  %s (default)\n", name)
+			default:
 				fmt.Printf("  %s\n", name)
 			}
 		}
@@ -74,10 +80,6 @@ var profileRemoveCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
 
-		if strings.EqualFold(name, "default") {
-			return fmt.Errorf("cannot remove the default profile")
-		}
-
 		if err := config.ValidateProfileName(name); err != nil {
 			return err
 		}
@@ -85,6 +87,10 @@ var profileRemoveCmd = &cobra.Command{
 		cfg, err := config.Load()
 		if err != nil {
 			return fmt.Errorf("failed to load config: %w", err)
+		}
+
+		if strings.EqualFold(name, cfg.GetDefaultProfile()) {
+			return fmt.Errorf("cannot remove the default profile %q", cfg.GetDefaultProfile())
 		}
 
 		profileDir, err := cfg.ProfileDataDir(name)
@@ -118,10 +124,47 @@ var profileRemoveCmd = &cobra.Command{
 	},
 }
 
+var profileSetDefaultCmd = &cobra.Command{
+	Use:   "set-default <name>",
+	Short: "Set the default profile",
+	Long:  "Set which profile is used when --profile is not specified",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		name := args[0]
+
+		if err := config.ValidateProfileName(name); err != nil {
+			return err
+		}
+
+		cfg, err := config.Load()
+		if err != nil {
+			return fmt.Errorf("failed to load config: %w", err)
+		}
+
+		// Verify the profile directory exists
+		profileDir, err := cfg.ProfileDataDir(name)
+		if err != nil {
+			return err
+		}
+		if _, err := os.Stat(profileDir); os.IsNotExist(err) {
+			return fmt.Errorf("profile %q does not exist", name)
+		}
+
+		cfg.DefaultProfile = name
+		if err := cfg.Save(); err != nil {
+			return fmt.Errorf("failed to save config: %w", err)
+		}
+
+		fmt.Printf("Default profile set to %q\n", name)
+		return nil
+	},
+}
+
 func init() {
 	rootCmd.AddCommand(profileCmd)
 	profileCmd.AddCommand(profileListCmd)
 	profileCmd.AddCommand(profileRemoveCmd)
+	profileCmd.AddCommand(profileSetDefaultCmd)
 
 	profileRemoveCmd.Flags().BoolP("yes", "y", false, "skip confirmation prompt")
 }
